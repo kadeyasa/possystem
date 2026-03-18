@@ -1,0 +1,16 @@
+.DS_Store
+.env
+
+# Build artifacts
+reconcile_accounting_sync
+remap_legacy_sale_accounts
+*.exe
+*.out
+
+# Runtime and local data
+uploads/
+tmp_audit_backups/
+*.log
+
+# Go test and coverage
+coverage.out

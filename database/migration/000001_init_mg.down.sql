@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS public.tblaccounts;
+DROP TABLE IF EXISTS public.tblcategories;
+DROP TABLE IF EXISTS public.tblcustomers;
+DROP TABLE IF EXISTS public.tbljournal_entries;
+DROP TABLE IF EXISTS public.tbljournal_lines;
+DROP TABLE IF EXISTS public.tblproducts;
+DROP TABLE IF EXISTS public.tblpurchase_items;
+DROP TABLE IF EXISTS public.tblpurchases;
+DROP TABLE IF EXISTS public.tblrefund_items;
+DROP TABLE IF EXISTS public.tblrefunds;
+DROP TABLE IF EXISTS public.tbltransaction_items;
+DROP TABLE IF EXISTS public.tbltransactions;
+DROP TABLE IF EXISTS public.tblvariants;
+DROP TABLE IF EXISTS public.tblmasterwaktu;
+DROP TABLE IF EXISTS public.tglmastermetode;
