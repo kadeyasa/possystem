@@ -102,6 +102,7 @@ func SetupRoutes(router *gin.Engine) {
 	purchase := router.Group("/api/purchase")
 	purchase.Use(middleware.AuthMiddleware())
 	{
+		purchase.POST("/extract-invoice", controllers.ExtractPurchaseInvoice)
 		purchase.POST("/", controllers.CreatePurchase)
 		purchase.GET("/reports", controllers.GetPurchaseReport)
 		purchase.GET("/reports/vendor-price-comparison", controllers.GetVendorPriceComparisonReport)
@@ -166,6 +167,8 @@ func SetupRoutes(router *gin.Engine) {
 		transactionGroup.GET("/weekly", controllers.GetTransactionsWeekly)
 		transactionGroup.GET("/monthly", controllers.GetTransactionsMonthly)
 		transactionGroup.GET("/salesreport", controllers.GetSalesReport)
+		transactionGroup.GET("/ai-pricing-assistant", controllers.GetPOSPricingAssistant)
+		transactionGroup.POST("/ai-pricing-assistant/feedback", controllers.SubmitPOSPricingAssistantFeedback)
 		transactionGroup.GET("/dashboarddata", controllers.GetDashboardInfo)
 		transactionGroup.PUT("/update/:id", controllers.UpdateStatus)
 	}
@@ -204,6 +207,13 @@ func SetupRoutes(router *gin.Engine) {
 		refunds.GET("/reports", controllers.GetRefundReport)
 	}
 
+	refundStoreCredits := router.Group("/api/refund-store-credits")
+	refundStoreCredits.Use(middleware.AuthMiddleware())
+	{
+		refundStoreCredits.GET("/", controllers.GetRefundStoreCredits)
+		refundStoreCredits.GET("/lookup", controllers.LookupRefundStoreCredit)
+	}
+
 	approvalRequestsSubmission := router.Group("/api/approval-requests")
 	approvalRequestsSubmission.Use(middleware.AuthMiddleware())
 	{
@@ -223,12 +233,12 @@ func SetupRoutes(router *gin.Engine) {
 	customers := router.Group("/api/customers")
 	customers.Use(middleware.AuthMiddleware())
 	{
+		customers.GET("/outlet", controllers.GetCustomerByOutlet)
 		customers.GET("/", controllers.GetAllCustomers)      // GET all customers
 		customers.GET("/:id", controllers.GetCustomerByID)   // GET customer by ID
 		customers.POST("/", controllers.CreateCustomer)      // POST create customer
 		customers.PUT("/:id", controllers.UpdateCustomer)    // PUT update customer
 		customers.DELETE("/:id", controllers.DeleteCustomer) // DELETE customer
-		customers.GET("/outlet", controllers.GetCustomerByOutlet)
 	}
 
 	deposit := router.Group("/api/deposit")
