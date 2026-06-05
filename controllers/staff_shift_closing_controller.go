@@ -27,6 +27,7 @@ type staffShiftClosingAggregate struct {
 	TransactionCount        int64
 	GrossSalesAmount        float64
 	DiscountAmount          float64
+	ServiceAmount           float64
 	TaxAmount               float64
 	NetSalesAmount          float64
 	CashTransactionCount    int64
@@ -37,6 +38,10 @@ type staffShiftClosingAggregate struct {
 
 func GetCurrentStaffShiftClosingPreview(c *gin.Context) {
 	if err := services.EnsurePOSApprovalSchema(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := services.EnsureRefundSettlementSchema(database.DB); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -119,6 +124,10 @@ func CreateStaffShiftClosing(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	if err := services.EnsureRefundSettlementSchema(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	if err := services.EnsureStaffShiftClosingSchema(database.DB); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -162,6 +171,7 @@ func CreateStaffShiftClosing(c *gin.Context) {
 			TransactionCount:        currentPreview.TransactionCount,
 			GrossSalesAmount:        currentPreview.GrossSalesAmount,
 			DiscountAmount:          currentPreview.DiscountAmount,
+			ServiceAmount:           currentPreview.ServiceAmount,
 			TaxAmount:               currentPreview.TaxAmount,
 			NetSalesAmount:          currentPreview.NetSalesAmount,
 			CashTransactionCount:    currentPreview.CashTransactionCount,
@@ -220,38 +230,49 @@ func buildStaffShiftClosingPreview(db *gorm.DB, outletID, cashierID uint, cashie
 	}
 
 	aggregate := staffShiftClosingAggregate{}
-	query := `
+	netSalesExpr := `COALESCE(NULLIF(grand_total, 0), COALESCE(NULLIF(subtotal, 0), total) - COALESCE(discount, 0) + COALESCE(service, 0) + COALESCE(tax, 0))`
+	settlementAmountExpr := fmt.Sprintf(`COALESCE(settlement_amount, %s)`, netSalesExpr)
+	query := fmt.Sprintf(`
 		SELECT
 			COUNT(*)::bigint AS transaction_count,
-			COALESCE(SUM(COALESCE(total, 0)), 0)::double precision AS gross_sales_amount,
+			COALESCE(SUM(COALESCE(NULLIF(subtotal, 0), total)), 0)::double precision AS gross_sales_amount,
 			COALESCE(SUM(COALESCE(discount, 0)), 0)::double precision AS discount_amount,
+			COALESCE(SUM(COALESCE(service, 0)), 0)::double precision AS service_amount,
 			COALESCE(SUM(COALESCE(tax, 0)), 0)::double precision AS tax_amount,
-			COALESCE(SUM(COALESCE(total, 0) - COALESCE(discount, 0) + COALESCE(tax, 0)), 0)::double precision AS net_sales_amount,
+			COALESCE(SUM(%s), 0)::double precision AS net_sales_amount,
 			COUNT(*) FILTER (
-				WHERE LOWER(COALESCE(payment_method, '')) LIKE '%cash%'
-				   OR LOWER(COALESCE(payment_method, '')) LIKE '%tunai%'
+				WHERE (
+					LOWER(COALESCE(payment_method, '')) LIKE '%%cash%%'
+					OR LOWER(COALESCE(payment_method, '')) LIKE '%%tunai%%'
+				)
+				  AND %s > 0
 			)::bigint AS cash_transaction_count,
 			COALESCE(SUM(
 				CASE
-					WHEN LOWER(COALESCE(payment_method, '')) LIKE '%cash%'
-					  OR LOWER(COALESCE(payment_method, '')) LIKE '%tunai%'
-					THEN COALESCE(total, 0) - COALESCE(discount, 0) + COALESCE(tax, 0)
+					WHEN (
+						LOWER(COALESCE(payment_method, '')) LIKE '%%cash%%'
+						OR LOWER(COALESCE(payment_method, '')) LIKE '%%tunai%%'
+					)
+					  AND %s > 0
+					THEN %s
 					ELSE 0
 				END
 			), 0)::double precision AS cash_sales_amount,
 			COUNT(*) FILTER (
 				WHERE NOT (
-					LOWER(COALESCE(payment_method, '')) LIKE '%cash%'
-					OR LOWER(COALESCE(payment_method, '')) LIKE '%tunai%'
+					LOWER(COALESCE(payment_method, '')) LIKE '%%cash%%'
+					OR LOWER(COALESCE(payment_method, '')) LIKE '%%tunai%%'
 				)
+				  AND %s > 0
 			)::bigint AS non_cash_transaction_count,
 			COALESCE(SUM(
 				CASE
 					WHEN NOT (
-						LOWER(COALESCE(payment_method, '')) LIKE '%cash%'
-						OR LOWER(COALESCE(payment_method, '')) LIKE '%tunai%'
+						LOWER(COALESCE(payment_method, '')) LIKE '%%cash%%'
+						OR LOWER(COALESCE(payment_method, '')) LIKE '%%tunai%%'
 					)
-					THEN COALESCE(total, 0) - COALESCE(discount, 0) + COALESCE(tax, 0)
+					  AND %s > 0
+					THEN %s
 					ELSE 0
 				END
 			), 0)::double precision AS non_cash_sales_amount
@@ -261,7 +282,7 @@ func buildStaffShiftClosingPreview(db *gorm.DB, outletID, cashierID uint, cashie
 		  AND created_at >= ?
 		  AND created_at <= ?
 		  AND COALESCE(document_status, ?) <> ?
-	`
+	`, netSalesExpr, settlementAmountExpr, settlementAmountExpr, settlementAmountExpr, settlementAmountExpr, settlementAmountExpr, settlementAmountExpr)
 
 	if err := db.Raw(
 		query,
@@ -285,6 +306,7 @@ func buildStaffShiftClosingPreview(db *gorm.DB, outletID, cashierID uint, cashie
 		TransactionCount:        aggregate.TransactionCount,
 		GrossSalesAmount:        aggregate.GrossSalesAmount,
 		DiscountAmount:          aggregate.DiscountAmount,
+		ServiceAmount:           aggregate.ServiceAmount,
 		TaxAmount:               aggregate.TaxAmount,
 		NetSalesAmount:          aggregate.NetSalesAmount,
 		CashTransactionCount:    aggregate.CashTransactionCount,

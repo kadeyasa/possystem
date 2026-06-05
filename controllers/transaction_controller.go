@@ -16,34 +16,302 @@ import (
 )
 
 type TransactionInput struct {
-	OutletID      uint                     `json:"outlet_id"`
-	CashierID     uint                     `json:"cashier_id"`
-	CashierName   string                   `json:"cashier_name"`
-	Total         float64                  `json:"total"`
-	Tax           float64                  `json:"tax"`
-	Discount      float64                  `json:"discount"`
-	PaymentMethod string                   `json:"payment_method"` // "cash" or "credit"
-	Note          string                   `json:"note"`
-	Status        uint                     `json:"status"`
-	Items         []models.TransactionItem `json:"items"`
+	OutletID           uint                     `json:"outlet_id"`
+	CashierID          uint                     `json:"cashier_id"`
+	CashierName        string                   `json:"cashier_name"`
+	CustomerID         *uint                    `json:"customer_id"`
+	CustomerName       string                   `json:"customer_name"`
+	Subtotal           float64                  `json:"subtotal"`
+	DiscountPercent    float64                  `json:"discount_percent"`
+	Total              float64                  `json:"total"`
+	ServicePercent     float64                  `json:"service_percent"`
+	Service            float64                  `json:"service"`
+	TaxPercent         float64                  `json:"tax_percent"`
+	Tax                float64                  `json:"tax"`
+	Discount           float64                  `json:"discount"`
+	GrandTotal         float64                  `json:"grand_total"`
+	PaymentMethod      string                   `json:"payment_method"` // "cash" or "credit"
+	RefundCreditCode   string                   `json:"refund_credit_code"`
+	RefundCreditAmount float64                  `json:"refund_credit_amount"`
+	Note               string                   `json:"note"`
+	Status             uint                     `json:"status"`
+	Items              []models.TransactionItem `json:"items"`
+}
+
+type resolvedTransactionAmounts struct {
+	Subtotal        float64
+	DiscountPercent float64
+	Discount        float64
+	ServicePercent  float64
+	Service         float64
+	TaxPercent      float64
+	Tax             float64
+	GrandTotal      float64
+}
+
+func clampTransactionAmount(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func clampTransactionPercent(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
+}
+
+func resolveTransactionAmounts(input TransactionInput) resolvedTransactionAmounts {
+	subtotal := clampTransactionAmount(input.Subtotal)
+	if subtotal == 0 {
+		subtotal = clampTransactionAmount(input.Total)
+	}
+
+	discountPercent := clampTransactionPercent(input.DiscountPercent)
+	discount := clampTransactionAmount(input.Discount)
+	if discount == 0 && discountPercent > 0 {
+		discount = subtotal * (discountPercent / 100.0)
+	}
+
+	netSubtotal := subtotal - discount
+	if netSubtotal < 0 {
+		netSubtotal = 0
+	}
+
+	servicePercent := clampTransactionPercent(input.ServicePercent)
+	service := clampTransactionAmount(input.Service)
+	if service == 0 && servicePercent > 0 {
+		service = netSubtotal * (servicePercent / 100.0)
+	}
+
+	taxPercent := clampTransactionPercent(input.TaxPercent)
+	tax := clampTransactionAmount(input.Tax)
+	if tax == 0 && taxPercent > 0 {
+		tax = (netSubtotal + service) * (taxPercent / 100.0)
+	}
+
+	grandTotal := clampTransactionAmount(input.GrandTotal)
+	if grandTotal == 0 {
+		grandTotal = netSubtotal + service + tax
+	}
+
+	return resolvedTransactionAmounts{
+		Subtotal:        subtotal,
+		DiscountPercent: discountPercent,
+		Discount:        discount,
+		ServicePercent:  servicePercent,
+		Service:         service,
+		TaxPercent:      taxPercent,
+		Tax:             tax,
+		GrandTotal:      grandTotal,
+	}
+}
+
+type transactionApprovalLockSnapshot struct {
+	RequestType string
+	Status      string
+	Message     string
+	priority    int
 }
 
 func applyNonVoidedTransactionFilter(query *gorm.DB) *gorm.DB {
 	return query.Where("COALESCE(document_status, ?) <> ?", services.TransactionDocumentStatusPosted, services.TransactionDocumentStatusVoided)
 }
 
-func applyTransactionDateFilters(query *gorm.DB, startDate, endDate string) *gorm.DB {
-	if parsed, err := time.Parse("2006-01-02", strings.TrimSpace(startDate)); err == nil {
-		query = query.Where("created_at >= CAST(? AS timestamp)", parsed.Format("2006-01-02"))
+func buildTransactionApprovalLockSnapshot(request models.POSApprovalRequest) (transactionApprovalLockSnapshot, bool) {
+	switch {
+	case strings.EqualFold(strings.TrimSpace(request.Status), services.POSApprovalStatusPending):
+		return transactionApprovalLockSnapshot{
+			RequestType: request.RequestType,
+			Status:      services.POSApprovalStatusPending,
+			Message:     "Transaksi ini sedang menunggu approval.",
+			priority:    3,
+		}, true
+	case strings.EqualFold(strings.TrimSpace(request.Status), services.POSApprovalStatusApproved) &&
+		strings.EqualFold(strings.TrimSpace(request.RequestType), services.POSApprovalRequestTypeVoid):
+		return transactionApprovalLockSnapshot{
+			RequestType: services.POSApprovalRequestTypeVoid,
+			Status:      services.POSApprovalStatusApproved,
+			Message:     "Transaksi ini sudah di-void lewat approval.",
+			priority:    2,
+		}, true
+	default:
+		return transactionApprovalLockSnapshot{}, false
 	}
-	if parsed, err := time.Parse("2006-01-02", strings.TrimSpace(endDate)); err == nil {
-		query = query.Where("created_at < CAST(? AS timestamp)", parsed.AddDate(0, 0, 1).Format("2006-01-02"))
+}
+
+func attachRefundableItemsToTransactions(tx *gorm.DB, transactions []models.Transaction) error {
+	if len(transactions) == 0 {
+		return nil
+	}
+
+	transactionIDs := make([]uint, 0, len(transactions))
+	for _, transaction := range transactions {
+		if transaction.ID > 0 {
+			transactionIDs = append(transactionIDs, transaction.ID)
+		}
+	}
+	if len(transactionIDs) == 0 {
+		return nil
+	}
+
+	type refundedQtyRow struct {
+		TransactionID uint
+		ProductID     uint
+		Quantity      int
+	}
+
+	var refundedRows []refundedQtyRow
+	if err := tx.Table("tblrefund_items AS ri").
+		Select("r.transaction_id AS transaction_id, ri.product_id AS product_id, COALESCE(SUM(ri.quantity), 0) AS quantity").
+		Joins("JOIN tblrefunds AS r ON r.id = ri.refund_id").
+		Where("r.transaction_id IN ?", transactionIDs).
+		Group("r.transaction_id, ri.product_id").
+		Scan(&refundedRows).Error; err != nil {
+		return err
+	}
+
+	refundedMap := make(map[string]int, len(refundedRows))
+	for _, row := range refundedRows {
+		refundedMap[fmt.Sprintf("%d:%d", row.TransactionID, row.ProductID)] = row.Quantity
+	}
+
+	for index := range transactions {
+		type soldAggregate struct {
+			productID   uint
+			productName string
+			quantity    int
+			total       float64
+			unitPrice   float64
+		}
+
+		grouped := make(map[uint]*soldAggregate)
+		order := make([]uint, 0)
+		for _, item := range transactions[index].Items {
+			entry, exists := grouped[item.ProductID]
+			if !exists {
+				entry = &soldAggregate{
+					productID:   item.ProductID,
+					productName: strings.TrimSpace(item.Product.Name),
+				}
+				if entry.productName == "" {
+					entry.productName = fmt.Sprintf("Product #%d", item.ProductID)
+				}
+				grouped[item.ProductID] = entry
+				order = append(order, item.ProductID)
+			}
+			entry.quantity += item.Quantity
+			entry.total += item.Total
+			if entry.quantity > 0 {
+				entry.unitPrice = entry.total / float64(entry.quantity)
+			}
+		}
+
+		summaries := make([]models.RefundableItemSummary, 0, len(order))
+		for _, productID := range order {
+			entry := grouped[productID]
+			refundedQty := refundedMap[fmt.Sprintf("%d:%d", transactions[index].ID, productID)]
+			refundableQty := entry.quantity - refundedQty
+			if refundableQty < 0 {
+				refundableQty = 0
+			}
+			summaries = append(summaries, models.RefundableItemSummary{
+				ProductID:          productID,
+				ProductName:        entry.productName,
+				SoldQuantity:       entry.quantity,
+				RefundedQuantity:   refundedQty,
+				RefundableQuantity: refundableQty,
+				UnitPrice:          entry.unitPrice,
+				Total:              entry.total,
+			})
+		}
+		transactions[index].RefundableItems = summaries
+	}
+
+	return nil
+}
+
+func attachApprovalLocksToTransactions(tx *gorm.DB, transactions []models.Transaction) error {
+	if len(transactions) == 0 {
+		return nil
+	}
+
+	transactionIDs := make([]uint, 0, len(transactions))
+	for _, transaction := range transactions {
+		if transaction.ID > 0 {
+			transactionIDs = append(transactionIDs, transaction.ID)
+		}
+	}
+	if len(transactionIDs) == 0 {
+		return nil
+	}
+
+	var requests []models.POSApprovalRequest
+	if err := tx.
+		Where("transaction_id IN ?", transactionIDs).
+		Where("status IN ?", []string{services.POSApprovalStatusPending, services.POSApprovalStatusApproved}).
+		Order("requested_at DESC, id DESC").
+		Find(&requests).Error; err != nil {
+		return err
+	}
+
+	lockByTransactionID := make(map[uint]transactionApprovalLockSnapshot)
+	for _, request := range requests {
+		candidate, shouldLock := buildTransactionApprovalLockSnapshot(request)
+		if !shouldLock {
+			continue
+		}
+
+		existing, exists := lockByTransactionID[request.TransactionID]
+		if !exists || candidate.priority > existing.priority {
+			lockByTransactionID[request.TransactionID] = candidate
+		}
+	}
+
+	for index := range transactions {
+		lock, exists := lockByTransactionID[transactions[index].ID]
+		if !exists {
+			continue
+		}
+
+		transactions[index].ApprovalLocked = true
+		transactions[index].ApprovalLockType = lock.RequestType
+		transactions[index].ApprovalLockStatus = lock.Status
+		transactions[index].ApprovalLockMessage = lock.Message
+	}
+
+	return nil
+}
+
+func parseTransactionDateOnly(value string) (time.Time, error) {
+	return time.ParseInLocation("2006-01-02", strings.TrimSpace(value), time.Local)
+}
+
+func applyTransactionDateFilters(query *gorm.DB, startDate, endDate string) *gorm.DB {
+	if parsed, err := parseTransactionDateOnly(startDate); err == nil {
+		query = query.Where("created_at >= ?", parsed)
+	}
+	if parsed, err := parseTransactionDateOnly(endDate); err == nil {
+		query = query.Where("created_at < ?", parsed.AddDate(0, 0, 1))
 	}
 	return query
 }
 
 // GET: /transactions
 func GetAllTransactions(c *gin.Context) {
+	if err := services.EnsureAccountingSyncSchema(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := services.EnsureRefundSettlementSchema(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	if err := services.EnsurePOSApprovalSchema(database.DB); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -65,8 +333,8 @@ func GetAllTransactions(c *gin.Context) {
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		like := "%" + search + "%"
 		query = query.Where(
-			"CAST(id AS TEXT) ILIKE ? OR COALESCE(cashier_name, '') ILIKE ? OR COALESCE(payment_method, '') ILIKE ? OR COALESCE(note, '') ILIKE ?",
-			like, like, like, like,
+			"CAST(id AS TEXT) ILIKE ? OR COALESCE(cashier_name, '') ILIKE ? OR COALESCE(customer_name, '') ILIKE ? OR COALESCE(payment_method, '') ILIKE ? OR COALESCE(note, '') ILIKE ?",
+			like, like, like, like, like,
 		)
 	}
 
@@ -74,11 +342,25 @@ func GetAllTransactions(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	if err := attachRefundableItemsToTransactions(database.DB, transactions); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(c.Query("include_approval_locks")), "true") {
+		if err := attachApprovalLocksToTransactions(database.DB, transactions); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	c.JSON(http.StatusOK, transactions)
 }
 
 // GET: /transactions/:id
 func GetTransactionByID(c *gin.Context) {
+	if err := services.EnsureAccountingSyncSchema(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	id := c.Param("id")
 	var transaction models.Transaction
 
@@ -95,6 +377,10 @@ func GetTransactionByID(c *gin.Context) {
 
 // GET: /transactions/daily?date=2025-07-01
 func GetTransactionsDaily(c *gin.Context) {
+	if err := services.EnsureAccountingSyncSchema(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	if err := services.EnsurePOSApprovalSchema(database.DB); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -102,7 +388,7 @@ func GetTransactionsDaily(c *gin.Context) {
 
 	dateParam := c.Query("date")
 	OutletId := c.Query("outlet_id")
-	date, err := time.Parse("2006-01-02", dateParam)
+	date, err := parseTransactionDateOnly(dateParam)
 	if err != nil {
 		utils.Log.Warnf("❌ Bind JSON failed: %v", date)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date format. Use YYYY-MM-DD"})
@@ -130,6 +416,10 @@ func GetTransactionsDaily(c *gin.Context) {
 
 // GET: /transactions/weekly?date=2025-07-01
 func GetTransactionsWeekly(c *gin.Context) {
+	if err := services.EnsureAccountingSyncSchema(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	if err := services.EnsurePOSApprovalSchema(database.DB); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -137,7 +427,7 @@ func GetTransactionsWeekly(c *gin.Context) {
 
 	dateParam := c.Query("date")
 	OutletId := c.Query("outlet_id")
-	date, err := time.Parse("2006-01-02", dateParam)
+	date, err := parseTransactionDateOnly(dateParam)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date format. Use YYYY-MM-DD"})
 		return
@@ -171,6 +461,10 @@ func GetTransactionsWeekly(c *gin.Context) {
 
 // GET: /transactions/monthly?year=2025&month=7
 func GetTransactionsMonthly(c *gin.Context) {
+	if err := services.EnsureAccountingSyncSchema(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	if err := services.EnsurePOSApprovalSchema(database.DB); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -179,7 +473,7 @@ func GetTransactionsMonthly(c *gin.Context) {
 	year := c.Query("year")
 	month := c.Query("month")
 	OutletId := c.Query("outlet_id")
-	start, err := time.Parse("2006-1-2", year+"-"+month+"-1")
+	start, err := time.ParseInLocation("2006-1-2", year+"-"+month+"-1", time.Local)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid year/month format"})
 		return
@@ -217,6 +511,15 @@ func CreateTransaction(c *gin.Context) {
 		return
 	}
 
+	if services.NormalizeSettlementPurpose(input.PaymentMethod) == "receivable" &&
+		(input.CustomerID == nil || *input.CustomerID == 0) &&
+		strings.TrimSpace(input.RefundCreditCode) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "customer_id is required for hutang customer transactions",
+		})
+		return
+	}
+
 	if err := services.EnsureAccountingSyncSchema(database.DB); err != nil {
 		utils.Log.Errorf("❌ Failed to ensure accounting sync schema: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare accounting sync schema"})
@@ -225,6 +528,11 @@ func CreateTransaction(c *gin.Context) {
 	if err := services.EnsureInventorySchema(database.DB); err != nil {
 		utils.Log.Errorf("❌ Failed to ensure inventory schema: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare inventory schema"})
+		return
+	}
+	if err := services.EnsureRefundSettlementSchema(database.DB); err != nil {
+		utils.Log.Errorf("❌ Failed to ensure refund settlement schema: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare refund settlement schema"})
 		return
 	}
 	if err := services.EnsurePOSApprovalSchema(database.DB); err != nil {
@@ -239,9 +547,81 @@ func CreateTransaction(c *gin.Context) {
 	)
 
 	err := database.DB.Transaction(func(tx *gorm.DB) error {
+		amounts := resolveTransactionAmounts(input)
 		cashierName := strings.TrimSpace(input.CashierName)
 		if cashierName == "" && input.CashierID > 0 {
 			cashierName = fmt.Sprintf("Cashier #%d", input.CashierID)
+		}
+
+		refundCreditCode := strings.TrimSpace(input.RefundCreditCode)
+		refundCreditAmount := clampTransactionAmount(input.RefundCreditAmount)
+		if refundCreditCode == "" {
+			refundCreditAmount = 0
+		}
+		if refundCreditAmount > amounts.GrandTotal {
+			return fmt.Errorf(
+				"refund credit amount %.2f cannot exceed grand total %.2f",
+				refundCreditAmount,
+				amounts.GrandTotal,
+			)
+		}
+		paymentSettlementAmount := amounts.GrandTotal - refundCreditAmount
+		if paymentSettlementAmount < 0 {
+			paymentSettlementAmount = 0
+		}
+
+		effectivePaymentMethod := strings.TrimSpace(input.PaymentMethod)
+		if refundCreditAmount > 0 && paymentSettlementAmount <= 0 {
+			effectivePaymentMethod = "refund_credit"
+		}
+		if refundCreditAmount > 0 &&
+			paymentSettlementAmount > 0 &&
+			services.NormalizeSettlementPurpose(effectivePaymentMethod) == "return_credit" {
+			return fmt.Errorf("refund credit cannot be used as the additional payment method when there is remaining balance")
+		}
+
+		var lockedRefundCredit *models.RefundStoreCredit
+		resolvedCustomerID := input.CustomerID
+		if refundCreditAmount > 0 {
+			var err error
+			lockedRefundCredit, err = services.LockActiveRefundStoreCreditByCode(tx, input.OutletID, refundCreditCode)
+			if err != nil {
+				return err
+			}
+			if refundCreditAmount > lockedRefundCredit.RemainingAmount {
+				return fmt.Errorf(
+					"refund store credit %s remaining balance is %.2f",
+					lockedRefundCredit.CreditCode,
+					lockedRefundCredit.RemainingAmount,
+				)
+			}
+			if resolvedCustomerID == nil && lockedRefundCredit.CustomerID != nil && *lockedRefundCredit.CustomerID > 0 {
+				resolvedCustomerID = lockedRefundCredit.CustomerID
+			}
+		}
+
+		customerName := strings.TrimSpace(input.CustomerName)
+		if resolvedCustomerID != nil && *resolvedCustomerID > 0 {
+			var customer models.Customer
+			if err := tx.
+				Where("id = ? AND outlet_id = ?", *resolvedCustomerID, input.OutletID).
+				Take(&customer).Error; err == nil {
+				customerName = strings.TrimSpace(customer.Name)
+			}
+		}
+		if lockedRefundCredit != nil {
+			if lockedRefundCredit.CustomerID != nil && *lockedRefundCredit.CustomerID > 0 {
+				if resolvedCustomerID == nil || *resolvedCustomerID == 0 || *resolvedCustomerID != *lockedRefundCredit.CustomerID {
+					return fmt.Errorf("refund store credit %s is tied to a different customer", lockedRefundCredit.CreditCode)
+				}
+			}
+			if customerName == "" {
+				customerName = strings.TrimSpace(lockedRefundCredit.CustomerName)
+			}
+		}
+		if services.NormalizeSettlementPurpose(effectivePaymentMethod) == "receivable" &&
+			(resolvedCustomerID == nil || *resolvedCustomerID == 0) {
+			return fmt.Errorf("customer_id is required for hutang customer transactions")
 		}
 
 		salePlan, err := services.PrepareSaleInventoryPlan(tx, input.OutletID, input.Items)
@@ -254,19 +634,36 @@ func CreateTransaction(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		cashAccount, err := services.ResolveSaleSettlementAccount(tx, input.OutletID, input.PaymentMethod)
-		if err != nil {
-			return err
+		var cashAccount models.Account
+		if paymentSettlementAmount > 0 {
+			cashAccount, err = services.ResolveSaleSettlementAccount(tx, input.OutletID, effectivePaymentMethod)
+			if err != nil {
+				return err
+			}
+		}
+		var refundCreditAccount models.Account
+		if refundCreditAmount > 0 {
+			refundCreditAccount, err = services.ResolveRefundCreditLiabilityAccount(tx, input.OutletID)
+			if err != nil {
+				return err
+			}
 		}
 
-		var taxAccount, discountAccount, cogsAccount, inventoryAccount models.Account
-		hasTax := input.Tax > 0
-		hasDiscount := input.Discount > 0
+		var taxAccount, serviceAccount, discountAccount, cogsAccount, inventoryAccount models.Account
+		hasTax := amounts.Tax > 0
+		hasService := amounts.Service > 0
+		hasDiscount := amounts.Discount > 0
 		hasCostJournal := false
 		costOfGoods := 0.0
 
 		if hasTax {
 			taxAccount, err = services.ResolveAccountForOutlet(tx, input.OutletID, "sale", "tax")
+			if err != nil {
+				return err
+			}
+		}
+		if hasService {
+			serviceAccount, err = services.ResolveAccountForOutlet(tx, input.OutletID, "sale", "service")
 			if err != nil {
 				return err
 			}
@@ -292,13 +689,6 @@ func CreateTransaction(c *gin.Context) {
 			}
 		}
 
-		outletFee, err := services.GetOutletFeeTx(tx, int64(input.OutletID))
-		if err != nil {
-			return fmt.Errorf("failed to get outlet fee: %w", err)
-		}
-		totalFee := (float64(outletFee.FeeSetting) / 100.0) * input.Total
-
-		finalTotal := input.Total - input.Discount + input.Tax
 		journal = models.JournalEntry{
 			OutletID:    input.OutletID,
 			Reference:   "Revenue",
@@ -308,30 +698,52 @@ func CreateTransaction(c *gin.Context) {
 
 		lines := []models.JournalLine{
 			{
-				AccountID:   cashAccount.ID,
-				Debit:       finalTotal,
-				Credit:      0,
-				Description: "Penerimaan penjualan",
-			},
-			{
 				AccountID:   salesAccount.ID,
 				Debit:       0,
-				Credit:      input.Total,
+				Credit:      amounts.Subtotal,
 				Description: "Penjualan barang",
 			},
+		}
+		if paymentSettlementAmount > 0 {
+			lines = append([]models.JournalLine{
+				{
+					AccountID:   cashAccount.ID,
+					Debit:       paymentSettlementAmount,
+					Credit:      0,
+					Description: "Penerimaan penjualan",
+				},
+			}, lines...)
+		}
+		if refundCreditAmount > 0 {
+			lines = append([]models.JournalLine{
+				{
+					AccountID:   refundCreditAccount.ID,
+					Debit:       refundCreditAmount,
+					Credit:      0,
+					Description: "Pemakaian saldo retur / voucher",
+				},
+			}, lines...)
+		}
+		if hasService {
+			lines = append(lines, models.JournalLine{
+				AccountID:   serviceAccount.ID,
+				Debit:       0,
+				Credit:      amounts.Service,
+				Description: "Service charge restoran",
+			})
 		}
 		if hasTax {
 			lines = append(lines, models.JournalLine{
 				AccountID:   taxAccount.ID,
 				Debit:       0,
-				Credit:      input.Tax,
+				Credit:      amounts.Tax,
 				Description: "Pajak penjualan",
 			})
 		}
 		if hasDiscount {
 			lines = append(lines, models.JournalLine{
 				AccountID:   discountAccount.ID,
-				Debit:       input.Discount,
+				Debit:       amounts.Discount,
 				Credit:      0,
 				Description: "Diskon penjualan",
 			})
@@ -352,10 +764,6 @@ func CreateTransaction(c *gin.Context) {
 				},
 			)
 		}
-		lines, _, err = services.TryAppendOutletFeeJournalLines(tx, input.OutletID, input.Total, lines)
-		if err != nil {
-			return err
-		}
 		journal.JournalLines = lines
 
 		if err := tx.Create(&journal).Error; err != nil {
@@ -366,10 +774,21 @@ func CreateTransaction(c *gin.Context) {
 			OutletID:              input.OutletID,
 			CashierID:             input.CashierID,
 			CashierName:           cashierName,
-			Total:                 input.Total,
-			Tax:                   input.Tax,
-			Discount:              input.Discount,
-			PaymentMethod:         input.PaymentMethod,
+			CustomerID:            resolvedCustomerID,
+			CustomerName:          customerName,
+			Subtotal:              amounts.Subtotal,
+			DiscountPercent:       amounts.DiscountPercent,
+			Total:                 amounts.Subtotal,
+			ServicePercent:        amounts.ServicePercent,
+			Service:               amounts.Service,
+			TaxPercent:            amounts.TaxPercent,
+			Tax:                   amounts.Tax,
+			Discount:              amounts.Discount,
+			GrandTotal:            amounts.GrandTotal,
+			SettlementAmount:      paymentSettlementAmount,
+			RefundCreditAmount:    refundCreditAmount,
+			RefundCreditCode:      refundCreditCode,
+			PaymentMethod:         effectivePaymentMethod,
 			Note:                  input.Note,
 			JournalEntryID:        &journal.ID,
 			AccountingSyncStatus:  services.AccountingSyncStatusPending,
@@ -442,12 +861,16 @@ func CreateTransaction(c *gin.Context) {
 			}
 		}
 
-		if err := services.CreateOrUpdateBalanceTx(tx, services.BalanceInput{
-			OutletID: input.OutletID,
-			Amount:   -totalFee,
-			Remarks:  "Transaction fee deduction",
-		}); err != nil {
-			return fmt.Errorf("failed to deduct balance: %w", err)
+		if refundCreditAmount > 0 && lockedRefundCredit != nil {
+			if err := services.ApplyRefundStoreCreditUsageTx(
+				tx,
+				lockedRefundCredit,
+				transaction,
+				refundCreditAmount,
+				fmt.Sprintf("Pemakaian saldo retur %s untuk transaksi #%d", lockedRefundCredit.CreditCode, transaction.ID),
+			); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -508,10 +931,10 @@ func GetSalesReport(c *gin.Context) {
 	query = applyNonVoidedTransactionFilter(query)
 
 	if startDateStr != "" && endDateStr != "" {
-		startDate, err1 := time.Parse("2006-01-02", startDateStr)
-		endDate, err2 := time.Parse("2006-01-02", endDateStr)
+		startDate, err1 := parseTransactionDateOnly(startDateStr)
+		endDate, err2 := parseTransactionDateOnly(endDateStr)
 		if err1 == nil && err2 == nil {
-			query = query.Where("created_at BETWEEN ? AND ?", startDate, endDate)
+			query = query.Where("created_at >= ? AND created_at < ?", startDate, endDate.AddDate(0, 0, 1))
 		}
 	}
 
@@ -548,7 +971,7 @@ func GetDashboardInfo(c *gin.Context) {
 	err := database.DB.Model(&models.Transaction{}).
 		Where("outlet_id=?", outletID).
 		Where("COALESCE(document_status, ?) <> ?", services.TransactionDocumentStatusPosted, services.TransactionDocumentStatusVoided).
-		Select("COALESCE(SUM(total), 0)").
+		Select("COALESCE(SUM(COALESCE(NULLIF(subtotal, 0), total)), 0)").
 		Scan(&totalSales).Error
 
 	if err != nil {
@@ -557,14 +980,14 @@ func GetDashboardInfo(c *gin.Context) {
 	}
 
 	// Total sales hari ini
-	today := time.Now()
+	today := time.Now().In(time.Local)
 	startOfDay := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
 	endOfDay := startOfDay.AddDate(0, 0, 1)
 
 	err = database.DB.Model(&models.Transaction{}).
 		Where("outlet_id = ? AND created_at >= ? AND created_at < ?", outletID, startOfDay, endOfDay).
 		Where("COALESCE(document_status, ?) <> ?", services.TransactionDocumentStatusPosted, services.TransactionDocumentStatusVoided).
-		Select("COALESCE(SUM(total), 0)").
+		Select("COALESCE(SUM(COALESCE(NULLIF(subtotal, 0), total)), 0)").
 		Scan(&todaySales).Error
 
 	if err != nil {
@@ -592,10 +1015,14 @@ func GetRevenue(c *gin.Context) {
 	var todayRevenue, yesterdayRevenue, weeklyRevenue, monthlyRevenue float64
 
 	// 🔹 Hari ini
+	revenueCategoryFilter := "LOWER(COALESCE(accounts.category, '')) IN ('revenue', 'pendapatan')"
+
 	if err := database.DB.Table("tbljournal_lines jl").
 		Select("COALESCE(SUM(jl.credit),0)").
 		Joins("JOIN tbljournal_entries je ON je.id = jl.journal_entry_id").
+		Joins("LEFT JOIN tblaccounts accounts ON accounts.id = jl.account_id").
 		Where("je.reference = ?", "Revenue").
+		Where(revenueCategoryFilter).
 		Where("DATE(je.created_at) = CURRENT_DATE").
 		Where("je.outlet_id=?", outlet).
 		Scan(&todayRevenue).Error; err != nil {
@@ -607,7 +1034,9 @@ func GetRevenue(c *gin.Context) {
 	if err := database.DB.Table("tbljournal_lines jl").
 		Select("COALESCE(SUM(jl.credit),0)").
 		Joins("JOIN tbljournal_entries je ON je.id = jl.journal_entry_id").
+		Joins("LEFT JOIN tblaccounts accounts ON accounts.id = jl.account_id").
 		Where("je.reference = ?", "Revenue").
+		Where(revenueCategoryFilter).
 		Where("DATE(je.created_at) = CURRENT_DATE - INTERVAL '1 day'").
 		Where("je.outlet_id=?", outlet).
 		Scan(&yesterdayRevenue).Error; err != nil {
@@ -619,7 +1048,9 @@ func GetRevenue(c *gin.Context) {
 	if err := database.DB.Table("tbljournal_lines jl").
 		Select("COALESCE(SUM(jl.credit),0)").
 		Joins("JOIN tbljournal_entries je ON je.id = jl.journal_entry_id").
+		Joins("LEFT JOIN tblaccounts accounts ON accounts.id = jl.account_id").
 		Where("je.reference = ?", "Revenue").
+		Where(revenueCategoryFilter).
 		Where("DATE_TRUNC('week', je.created_at) = DATE_TRUNC('week', CURRENT_DATE)").
 		Where("je.outlet_id=?", outlet).
 		Scan(&weeklyRevenue).Error; err != nil {
@@ -631,7 +1062,9 @@ func GetRevenue(c *gin.Context) {
 	if err := database.DB.Table("tbljournal_lines jl").
 		Select("COALESCE(SUM(jl.credit),0)").
 		Joins("JOIN tbljournal_entries je ON je.id = jl.journal_entry_id").
+		Joins("LEFT JOIN tblaccounts accounts ON accounts.id = jl.account_id").
 		Where("je.reference = ?", "Revenue").
+		Where(revenueCategoryFilter).
 		Where("DATE_TRUNC('month', je.created_at) = DATE_TRUNC('month', CURRENT_DATE)").
 		Where("je.outlet_id=?", outlet).
 		Scan(&monthlyRevenue).Error; err != nil {

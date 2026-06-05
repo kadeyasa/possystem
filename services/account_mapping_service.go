@@ -40,6 +40,58 @@ func normalizeAccountToken(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
+func NormalizeSettlementPurpose(value string) string {
+	switch normalizeAccountToken(value) {
+	case "transfer_bank", "bank_transfer":
+		return "transfer"
+	case "refund_credit", "store_credit", "voucher", "voucher_return", "saldo_retur", "retur_voucher":
+		return "return_credit"
+	case "receivable", "accounts_receivable", "account_receivable", "piutang", "hutang_customer", "customer_credit", "credit_customer":
+		return "receivable"
+	default:
+		return normalizeAccountToken(value)
+	}
+}
+
+func settlementPurposeCandidates(value string) []string {
+	raw := normalizeAccountToken(value)
+	normalized := NormalizeSettlementPurpose(value)
+	candidates := make([]string, 0, 6)
+	seen := make(map[string]struct{}, 6)
+	appendCandidate := func(candidate string) {
+		token := normalizeAccountToken(candidate)
+		if token == "" {
+			return
+		}
+		if _, exists := seen[token]; exists {
+			return
+		}
+		seen[token] = struct{}{}
+		candidates = append(candidates, token)
+	}
+
+	appendCandidate(normalized)
+	appendCandidate(raw)
+
+	if normalized == "receivable" {
+		appendCandidate("hutang_customer")
+		appendCandidate("customer_credit")
+		appendCandidate("piutang")
+	}
+	if normalized == "return_credit" {
+		appendCandidate("refund_credit")
+		appendCandidate("store_credit")
+		appendCandidate("voucher")
+		appendCandidate("saldo_retur")
+	}
+	if normalized == "transfer" {
+		appendCandidate("transfer_bank")
+		appendCandidate("bank_transfer")
+	}
+
+	return candidates
+}
+
 func makeAccountCategoryExpectation(label string, categories ...string) accountCategoryExpectation {
 	allowed := make(map[string]struct{}, len(categories))
 	for _, category := range categories {
@@ -58,7 +110,7 @@ func makeAccountCategoryExpectation(label string, categories ...string) accountC
 
 func ValidateAccountCategoryForMapping(category, transactionType, purpose string) error {
 	transactionType = normalizeAccountToken(transactionType)
-	purpose = normalizeAccountToken(purpose)
+	purpose = NormalizeSettlementPurpose(purpose)
 	category = normalizeAccountToken(category)
 
 	var expectation accountCategoryExpectation
@@ -67,10 +119,14 @@ func ValidateAccountCategoryForMapping(category, transactionType, purpose string
 		switch purpose {
 		case "sales":
 			expectation = makeAccountCategoryExpectation("revenue", "revenue", "pendapatan")
-		case "cash", "qris", "transfer":
+		case "cash", "qris", "transfer", "receivable":
 			expectation = makeAccountCategoryExpectation("asset", "asset", "aset")
+		case "return_credit":
+			expectation = makeAccountCategoryExpectation("liability", "liability", "utang")
 		case "tax":
 			expectation = makeAccountCategoryExpectation("liability", "liability", "utang")
+		case "service":
+			expectation = makeAccountCategoryExpectation("liability or revenue", "liability", "utang", "revenue", "pendapatan")
 		case "cogs":
 			expectation = makeAccountCategoryExpectation("expense", "expense", "beban")
 		case "discount":
@@ -170,13 +226,16 @@ func ResolveAccountForOutlet(tx *gorm.DB, outletID uint, transactionType, purpos
 }
 
 func ResolveSettlementAccountForOutlet(tx *gorm.DB, outletID uint, paymentMethod string) (models.Account, error) {
-	purpose := normalizeAccountToken(paymentMethod)
-	candidates := []accountSelector{
-		{TransactionType: "payment", Purpose: purpose},
-		{TransactionType: "settlement", Purpose: purpose},
-		{TransactionType: "expense", Purpose: purpose},
-		{TransactionType: "sale", Purpose: purpose},
-		{TransactionType: "purchase", Purpose: purpose},
+	purposeCandidates := settlementPurposeCandidates(paymentMethod)
+	candidates := make([]accountSelector, 0, len(purposeCandidates)*5)
+	for _, purpose := range purposeCandidates {
+		candidates = append(candidates,
+			accountSelector{TransactionType: "payment", Purpose: purpose},
+			accountSelector{TransactionType: "settlement", Purpose: purpose},
+			accountSelector{TransactionType: "expense", Purpose: purpose},
+			accountSelector{TransactionType: "sale", Purpose: purpose},
+			accountSelector{TransactionType: "purchase", Purpose: purpose},
+		)
 	}
 
 	account, found, err := tryResolveAccountByCandidates(tx, outletID, candidates)
@@ -187,7 +246,7 @@ func ResolveSettlementAccountForOutlet(tx *gorm.DB, outletID uint, paymentMethod
 		return account, nil
 	}
 
-	return models.Account{}, fmt.Errorf("settlement account mapping not found for outlet %d (%s)", outletID, purpose)
+	return models.Account{}, fmt.Errorf("settlement account mapping not found for outlet %d (%s)", outletID, NormalizeSettlementPurpose(paymentMethod))
 }
 
 func ResolveSaleSettlementAccount(tx *gorm.DB, outletID uint, paymentMethod string) (models.Account, error) {

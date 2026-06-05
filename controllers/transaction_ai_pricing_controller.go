@@ -22,62 +22,83 @@ type posPricingAssistantSummary struct {
 	AverageTicket        float64 `json:"average_ticket"`
 	TotalItemQuantity    int     `json:"total_item_quantity"`
 	DominantTimeSlot     string  `json:"dominant_time_slot"`
+	FocusProductID       uint    `json:"focus_product_id,omitempty"`
+	FocusProductName     string  `json:"focus_product_name,omitempty"`
+	FocusProductUnitCost float64 `json:"focus_product_unit_cost,omitempty"`
+	FocusProductCostFill float64 `json:"focus_product_cost_fill,omitempty"`
+}
+
+type posPricingMarginAnalysis struct {
+	EstimatedHPP           float64 `json:"estimated_hpp"`
+	BreakEvenPrice         float64 `json:"break_even_price"`
+	MinimumSafePrice       float64 `json:"minimum_safe_price"`
+	CurrentPrice           float64 `json:"current_price"`
+	CurrentMarginAmount    float64 `json:"current_margin_amount"`
+	CurrentMarginPercent   float64 `json:"current_margin_percent"`
+	SuggestedPrice         float64 `json:"suggested_price"`
+	SuggestedMarginAmount  float64 `json:"suggested_margin_amount"`
+	SuggestedMarginPercent float64 `json:"suggested_margin_percent"`
+	CostCoveragePercent    float64 `json:"cost_coverage_percent"`
+	CostCoverageLabel      string  `json:"cost_coverage_label"`
+	SafetyLabel            string  `json:"safety_label"`
 }
 
 type posBundlingRecommendation struct {
-	RecommendationKey                         string  `json:"recommendation_key"`
-	PrimaryProductID                          uint    `json:"primary_product_id"`
-	PrimaryProductName                        string  `json:"primary_product_name"`
-	PairedProductID                           uint    `json:"paired_product_id"`
-	PairedProductName                         string  `json:"paired_product_name"`
-	JointTransactionCount                     int     `json:"joint_transaction_count"`
-	AttachRatePercent                         float64 `json:"attach_rate_percent"`
-	AverageBundleValue                        float64 `json:"average_bundle_value"`
-	SuggestedDiscountPercent                  float64 `json:"suggested_discount_percent"`
-	SuggestedBundlePrice                      float64 `json:"suggested_bundle_price"`
-	Reason                                    string  `json:"reason"`
-	ConfidenceLabel                           string  `json:"confidence_label"`
-	FeedbackAcceptedCount                     int     `json:"feedback_accepted_count,omitempty"`
-	FeedbackIgnoredCount                      int     `json:"feedback_ignored_count,omitempty"`
-	FeedbackCampaignUsedCount                 int     `json:"feedback_campaign_used_count,omitempty"`
-	FeedbackSalesImprovedCount                int     `json:"feedback_sales_improved_count,omitempty"`
-	FeedbackEstimatedRevenueLiftTotal         float64 `json:"feedback_estimated_revenue_lift_total,omitempty"`
-	FeedbackObservedRevenueLiftTotal          float64 `json:"feedback_observed_revenue_lift_total,omitempty"`
-	FeedbackAverageTransactionLiftPercent     float64 `json:"feedback_average_transaction_lift_percent,omitempty"`
-	FeedbackAutoAttributedCampaignCount       int     `json:"feedback_auto_attributed_campaign_count,omitempty"`
-	FeedbackAutoObservedRevenueLiftTotal      float64 `json:"feedback_auto_observed_revenue_lift_total,omitempty"`
-	FeedbackAutoAverageTransactionLiftPercent float64 `json:"feedback_auto_average_transaction_lift_percent,omitempty"`
-	FeedbackLastAction                        string  `json:"feedback_last_action,omitempty"`
+	RecommendationKey                         string                   `json:"recommendation_key"`
+	PrimaryProductID                          uint                     `json:"primary_product_id"`
+	PrimaryProductName                        string                   `json:"primary_product_name"`
+	PairedProductID                           uint                     `json:"paired_product_id"`
+	PairedProductName                         string                   `json:"paired_product_name"`
+	JointTransactionCount                     int                      `json:"joint_transaction_count"`
+	AttachRatePercent                         float64                  `json:"attach_rate_percent"`
+	AverageBundleValue                        float64                  `json:"average_bundle_value"`
+	SuggestedDiscountPercent                  float64                  `json:"suggested_discount_percent"`
+	SuggestedBundlePrice                      float64                  `json:"suggested_bundle_price"`
+	MarginAnalysis                            posPricingMarginAnalysis `json:"margin_analysis"`
+	Reason                                    string                   `json:"reason"`
+	ConfidenceLabel                           string                   `json:"confidence_label"`
+	FeedbackAcceptedCount                     int                      `json:"feedback_accepted_count,omitempty"`
+	FeedbackIgnoredCount                      int                      `json:"feedback_ignored_count,omitempty"`
+	FeedbackCampaignUsedCount                 int                      `json:"feedback_campaign_used_count,omitempty"`
+	FeedbackSalesImprovedCount                int                      `json:"feedback_sales_improved_count,omitempty"`
+	FeedbackEstimatedRevenueLiftTotal         float64                  `json:"feedback_estimated_revenue_lift_total,omitempty"`
+	FeedbackObservedRevenueLiftTotal          float64                  `json:"feedback_observed_revenue_lift_total,omitempty"`
+	FeedbackAverageTransactionLiftPercent     float64                  `json:"feedback_average_transaction_lift_percent,omitempty"`
+	FeedbackAutoAttributedCampaignCount       int                      `json:"feedback_auto_attributed_campaign_count,omitempty"`
+	FeedbackAutoObservedRevenueLiftTotal      float64                  `json:"feedback_auto_observed_revenue_lift_total,omitempty"`
+	FeedbackAutoAverageTransactionLiftPercent float64                  `json:"feedback_auto_average_transaction_lift_percent,omitempty"`
+	FeedbackLastAction                        string                   `json:"feedback_last_action,omitempty"`
 	rankingScore                              float64
 }
 
 type posPromoCandidate struct {
-	RecommendationKey                         string  `json:"recommendation_key"`
-	StrategyKey                               string  `json:"strategy_key"`
-	StrategyLabel                             string  `json:"strategy_label"`
-	FocusType                                 string  `json:"focus_type"`
-	FocusProductID                            uint    `json:"focus_product_id,omitempty"`
-	FocusProductName                          string  `json:"focus_product_name,omitempty"`
-	TimeSlotKey                               string  `json:"time_slot_key,omitempty"`
-	TimeSlotLabel                             string  `json:"time_slot_label,omitempty"`
-	SupportingTransactions                    int     `json:"supporting_transactions"`
-	CurrentRevenue                            float64 `json:"current_revenue"`
-	SuggestedDiscountPercent                  float64 `json:"suggested_discount_percent"`
-	SuggestedPrice                            float64 `json:"suggested_price"`
-	ExpectedLiftPercent                       float64 `json:"expected_lift_percent"`
-	Reason                                    string  `json:"reason"`
-	ConfidenceLabel                           string  `json:"confidence_label"`
-	FeedbackAcceptedCount                     int     `json:"feedback_accepted_count,omitempty"`
-	FeedbackIgnoredCount                      int     `json:"feedback_ignored_count,omitempty"`
-	FeedbackCampaignUsedCount                 int     `json:"feedback_campaign_used_count,omitempty"`
-	FeedbackSalesImprovedCount                int     `json:"feedback_sales_improved_count,omitempty"`
-	FeedbackEstimatedRevenueLiftTotal         float64 `json:"feedback_estimated_revenue_lift_total,omitempty"`
-	FeedbackObservedRevenueLiftTotal          float64 `json:"feedback_observed_revenue_lift_total,omitempty"`
-	FeedbackAverageTransactionLiftPercent     float64 `json:"feedback_average_transaction_lift_percent,omitempty"`
-	FeedbackAutoAttributedCampaignCount       int     `json:"feedback_auto_attributed_campaign_count,omitempty"`
-	FeedbackAutoObservedRevenueLiftTotal      float64 `json:"feedback_auto_observed_revenue_lift_total,omitempty"`
-	FeedbackAutoAverageTransactionLiftPercent float64 `json:"feedback_auto_average_transaction_lift_percent,omitempty"`
-	FeedbackLastAction                        string  `json:"feedback_last_action,omitempty"`
+	RecommendationKey                         string                   `json:"recommendation_key"`
+	StrategyKey                               string                   `json:"strategy_key"`
+	StrategyLabel                             string                   `json:"strategy_label"`
+	FocusType                                 string                   `json:"focus_type"`
+	FocusProductID                            uint                     `json:"focus_product_id,omitempty"`
+	FocusProductName                          string                   `json:"focus_product_name,omitempty"`
+	TimeSlotKey                               string                   `json:"time_slot_key,omitempty"`
+	TimeSlotLabel                             string                   `json:"time_slot_label,omitempty"`
+	SupportingTransactions                    int                      `json:"supporting_transactions"`
+	CurrentRevenue                            float64                  `json:"current_revenue"`
+	SuggestedDiscountPercent                  float64                  `json:"suggested_discount_percent"`
+	SuggestedPrice                            float64                  `json:"suggested_price"`
+	ExpectedLiftPercent                       float64                  `json:"expected_lift_percent"`
+	MarginAnalysis                            posPricingMarginAnalysis `json:"margin_analysis"`
+	Reason                                    string                   `json:"reason"`
+	ConfidenceLabel                           string                   `json:"confidence_label"`
+	FeedbackAcceptedCount                     int                      `json:"feedback_accepted_count,omitempty"`
+	FeedbackIgnoredCount                      int                      `json:"feedback_ignored_count,omitempty"`
+	FeedbackCampaignUsedCount                 int                      `json:"feedback_campaign_used_count,omitempty"`
+	FeedbackSalesImprovedCount                int                      `json:"feedback_sales_improved_count,omitempty"`
+	FeedbackEstimatedRevenueLiftTotal         float64                  `json:"feedback_estimated_revenue_lift_total,omitempty"`
+	FeedbackObservedRevenueLiftTotal          float64                  `json:"feedback_observed_revenue_lift_total,omitempty"`
+	FeedbackAverageTransactionLiftPercent     float64                  `json:"feedback_average_transaction_lift_percent,omitempty"`
+	FeedbackAutoAttributedCampaignCount       int                      `json:"feedback_auto_attributed_campaign_count,omitempty"`
+	FeedbackAutoObservedRevenueLiftTotal      float64                  `json:"feedback_auto_observed_revenue_lift_total,omitempty"`
+	FeedbackAutoAverageTransactionLiftPercent float64                  `json:"feedback_auto_average_transaction_lift_percent,omitempty"`
+	FeedbackLastAction                        string                   `json:"feedback_last_action,omitempty"`
 	rankingScore                              float64
 }
 
@@ -94,6 +115,10 @@ type posPricingProductAggregate struct {
 	Quantity         int
 	Revenue          float64
 	AverageUnitPrice float64
+	CostTotal        float64
+	CostQuantity     int
+	AverageUnitCost  float64
+	CostCoverage     float64
 }
 
 type posPricingTimeSlotAggregate struct {
@@ -144,10 +169,14 @@ func GetPOSPricingAssistant(c *gin.Context) {
 
 	query := database.DB.
 		Preload("Items.Product").
+		Preload("Items.Variant").
 		Model(&models.Transaction{})
 	query = applyNonVoidedTransactionFilter(query)
 
-	var scopedOutletID uint
+	var (
+		scopedOutletID uint
+		focusProductID uint
+	)
 	if startDateStr := strings.TrimSpace(c.Query("start_date")); startDateStr != "" {
 		if parsed, err := parseTransactionDateOnly(startDateStr); err == nil {
 			query = query.Where("created_at >= ?", parsed)
@@ -167,6 +196,11 @@ func GetPOSPricingAssistant(c *gin.Context) {
 	if paymentMethod := strings.TrimSpace(c.Query("payment_method")); paymentMethod != "" {
 		query = query.Where("payment_method = ?", paymentMethod)
 	}
+	if productID := strings.TrimSpace(c.Query("product_id")); productID != "" {
+		if parsed, err := strconv.ParseUint(productID, 10, 64); err == nil {
+			focusProductID = uint(parsed)
+		}
+	}
 
 	var transactions []models.Transaction
 	if err := query.Order("created_at desc").Find(&transactions).Error; err != nil {
@@ -178,7 +212,7 @@ func GetPOSPricingAssistant(c *gin.Context) {
 		scopedOutletID = resolvePOSPricingScopedOutletID(transactions)
 	}
 
-	report := buildPOSPricingAssistantReport(transactions, nil)
+	report := buildPOSPricingAssistantReport(transactions, nil, focusProductID)
 
 	feedbackSummaries, err := services.GetAIPricingFeedbackSummaries(
 		database.DB,
@@ -196,7 +230,7 @@ func GetPOSPricingAssistant(c *gin.Context) {
 		}
 	}
 
-	report = buildPOSPricingAssistantReport(transactions, feedbackSummaries)
+	report = buildPOSPricingAssistantReport(transactions, feedbackSummaries, focusProductID)
 	c.JSON(http.StatusOK, report)
 }
 
@@ -288,6 +322,7 @@ type posPricingAutoAttributionAccumulator struct {
 func buildPOSPricingAssistantReport(
 	transactions []models.Transaction,
 	feedbackSummaries map[string]services.AIPricingFeedbackSummary,
+	focusProductID uint,
 ) posPricingAssistantReport {
 	productAggregates := make(map[uint]*posPricingProductAggregate)
 	timeSlotAggregates := make(map[string]*posPricingTimeSlotAggregate)
@@ -296,8 +331,16 @@ func buildPOSPricingAssistantReport(
 
 	totalGrossSales := 0.0
 	totalItemQuantity := 0
+	transactionsAnalyzed := 0
+	filteredTransactions := make([]models.Transaction, 0, len(transactions))
 
 	for _, transaction := range transactions {
+		if focusProductID > 0 && !transactionContainsPOSPricingProduct(transaction, focusProductID) {
+			continue
+		}
+		transactionsAnalyzed++
+		filteredTransactions = append(filteredTransactions, transaction)
+
 		transactionValue := getPOSPricingTransactionValue(transaction)
 		slotKey := getPOSPricingTimeSlotKey(transaction.CreatedAt)
 		slotLabel := getPOSPricingTimeSlotLabel(slotKey)
@@ -311,6 +354,8 @@ func buildPOSPricingAssistantReport(
 		slotEntry.Revenue += transactionValue
 
 		lineMap := make(map[uint]*posPricingLineAggregate)
+		lineCostTotals := make(map[uint]float64)
+		lineCostQty := make(map[uint]int)
 		for _, item := range transaction.Items {
 			if item.ProductID == 0 {
 				continue
@@ -332,6 +377,12 @@ func buildPOSPricingAssistantReport(
 			line.Quantity += item.Quantity
 			line.Revenue += item.Total
 			totalItemQuantity += item.Quantity
+
+			unitCost := resolvePOSPricingTransactionItemUnitCost(item)
+			if unitCost > 0 && item.Quantity > 0 {
+				lineCostTotals[item.ProductID] += unitCost * float64(item.Quantity)
+				lineCostQty[item.ProductID] += item.Quantity
+			}
 		}
 
 		productIDs := make([]uint, 0, len(lineMap))
@@ -351,6 +402,16 @@ func buildPOSPricingAssistantReport(
 			entry.Revenue += line.Revenue
 			if entry.Quantity > 0 {
 				entry.AverageUnitPrice = entry.Revenue / float64(entry.Quantity)
+			}
+			costQuantity := lineCostQty[productID]
+			costTotal := lineCostTotals[productID]
+			if costQuantity > 0 {
+				entry.CostQuantity += costQuantity
+				entry.CostTotal += costTotal
+				entry.AverageUnitCost = entry.CostTotal / float64(entry.CostQuantity)
+			}
+			if entry.Quantity > 0 {
+				entry.CostCoverage = minFloat((float64(entry.CostQuantity)/float64(entry.Quantity))*100, 100)
 			}
 
 			slotProducts := timeSlotProductCounts[slotKey]
@@ -387,8 +448,8 @@ func buildPOSPricingAssistantReport(
 		totalGrossSales += transactionValue
 	}
 
-	bundles := buildPOSBundlingRecommendations(productAggregates, pairAggregates)
-	promos := buildPOSPromoCandidates(transactions, productAggregates, timeSlotAggregates, timeSlotProductCounts, bundles)
+	bundles := buildPOSBundlingRecommendations(productAggregates, pairAggregates, focusProductID)
+	promos := buildPOSPromoCandidates(filteredTransactions, productAggregates, timeSlotAggregates, timeSlotProductCounts, bundles, focusProductID)
 	applyPOSPricingFeedbackSummaries(bundles, promos, feedbackSummaries)
 	if len(bundles) > 4 {
 		bundles = bundles[:4]
@@ -409,19 +470,34 @@ func buildPOSPricingAssistantReport(
 		dominantTimeSlot = best[0].Label
 	}
 
+	focusProductName := ""
+	focusProductUnitCost := 0.0
+	focusProductCostFill := 0.0
+	if focusProductID > 0 {
+		if focusAggregate := productAggregates[focusProductID]; focusAggregate != nil {
+			focusProductName = focusAggregate.Name
+			focusProductUnitCost = focusAggregate.AverageUnitCost
+			focusProductCostFill = focusAggregate.CostCoverage
+		}
+	}
+
 	return posPricingAssistantReport{
 		Summary: posPricingAssistantSummary{
-			TransactionsAnalyzed: len(transactions),
+			TransactionsAnalyzed: transactionsAnalyzed,
 			UniqueProducts:       len(productAggregates),
 			GrossSales:           totalGrossSales,
 			AverageTicket: func() float64 {
-				if len(transactions) == 0 {
+				if transactionsAnalyzed == 0 {
 					return 0
 				}
-				return totalGrossSales / float64(len(transactions))
+				return totalGrossSales / float64(transactionsAnalyzed)
 			}(),
-			TotalItemQuantity: totalItemQuantity,
-			DominantTimeSlot:  dominantTimeSlot,
+			TotalItemQuantity:    totalItemQuantity,
+			DominantTimeSlot:     dominantTimeSlot,
+			FocusProductID:       focusProductID,
+			FocusProductName:     focusProductName,
+			FocusProductUnitCost: focusProductUnitCost,
+			FocusProductCostFill: focusProductCostFill,
 		},
 		BundlingRecommendations: bundles,
 		PromoCandidates:         promos,
@@ -431,10 +507,14 @@ func buildPOSPricingAssistantReport(
 func buildPOSBundlingRecommendations(
 	productAggregates map[uint]*posPricingProductAggregate,
 	pairAggregates map[string]*posPricingPairAggregate,
+	focusProductID uint,
 ) []posBundlingRecommendation {
 	recommendations := make([]posBundlingRecommendation, 0, len(pairAggregates))
 
 	for _, pair := range pairAggregates {
+		if focusProductID > 0 && pair.LeftID != focusProductID && pair.RightID != focusProductID {
+			continue
+		}
 		left := productAggregates[pair.LeftID]
 		right := productAggregates[pair.RightID]
 		if pair.Count < 2 || left == nil || right == nil {
@@ -462,6 +542,12 @@ func buildPOSBundlingRecommendations(
 		}
 
 		score := float64(pair.Count*12) + attachRate + minFloat(averageBundleValue/40000, 18)
+		marginAnalysis := buildPOSPricingMarginAnalysis(
+			averageBundleValue,
+			roundMoney(averageBundleValue*(1-(discountPercent/100))),
+			left.AverageUnitCost+right.AverageUnitCost,
+			averagePOSPricingCoverage(left.CostCoverage, right.CostCoverage),
+		)
 		recommendations = append(recommendations, posBundlingRecommendation{
 			RecommendationKey:        buildPOSBundlingRecommendationKey(primary.ID, paired.ID),
 			PrimaryProductID:         primary.ID,
@@ -472,7 +558,8 @@ func buildPOSBundlingRecommendations(
 			AttachRatePercent:        attachRate,
 			AverageBundleValue:       averageBundleValue,
 			SuggestedDiscountPercent: discountPercent,
-			SuggestedBundlePrice:     roundMoney(averageBundleValue * (1 - (discountPercent / 100))),
+			SuggestedBundlePrice:     marginAnalysis.SuggestedPrice,
+			MarginAnalysis:           marginAnalysis,
 			Reason: fmt.Sprintf(
 				"%s dan %s muncul bersama di %d transaksi. Attach rate %s%% terhadap %s cukup kuat untuk dijadikan paket bundling.",
 				primary.Name,
@@ -504,16 +591,17 @@ func buildPOSPromoCandidates(
 	timeSlotAggregates map[string]*posPricingTimeSlotAggregate,
 	timeSlotProductCounts map[string]map[uint]int,
 	bundles []posBundlingRecommendation,
+	focusProductID uint,
 ) []posPromoCandidate {
 	candidates := make([]posPromoCandidate, 0, 3)
 
-	if slotCandidate, ok := buildPOSTimeSlotPromoCandidate(transactions, productAggregates, timeSlotAggregates, timeSlotProductCounts); ok {
+	if slotCandidate, ok := buildPOSTimeSlotPromoCandidate(transactions, productAggregates, timeSlotAggregates, timeSlotProductCounts, focusProductID); ok {
 		candidates = append(candidates, slotCandidate)
 	}
-	if heroCandidate, ok := buildPOSMultiBuyPromoCandidate(transactions, productAggregates); ok {
+	if heroCandidate, ok := buildPOSMultiBuyPromoCandidate(transactions, productAggregates, focusProductID); ok {
 		candidates = append(candidates, heroCandidate)
 	}
-	if bundleCandidate, ok := buildPOSBundlePromoCandidate(bundles); ok {
+	if bundleCandidate, ok := buildPOSBundlePromoCandidate(bundles, focusProductID); ok {
 		candidates = append(candidates, bundleCandidate)
 	}
 
@@ -525,6 +613,7 @@ func buildPOSTimeSlotPromoCandidate(
 	productAggregates map[uint]*posPricingProductAggregate,
 	timeSlotAggregates map[string]*posPricingTimeSlotAggregate,
 	timeSlotProductCounts map[string]map[uint]int,
+	focusProductID uint,
 ) (posPromoCandidate, bool) {
 	if len(transactions) < 6 || len(timeSlotAggregates) < 2 {
 		return posPromoCandidate{}, false
@@ -555,9 +644,19 @@ func buildPOSTimeSlotPromoCandidate(
 	totalTransactions := len(transactions)
 	shareGap := ((float64(strongest.Transactions) - float64(weakest.Transactions)) / float64(totalTransactions)) * 100
 	productID, productName := resolveTopPOSProductForTimeSlot(weakest.Key, timeSlotProductCounts, productAggregates)
+	if focusProductID > 0 {
+		if focusProduct, exists := productAggregates[focusProductID]; exists {
+			productID = focusProductID
+			productName = focusProduct.Name
+		}
+	}
 	product := productAggregates[productID]
 	if product == nil {
 		return posPromoCandidate{}, false
+	}
+	supportingTransactions, currentRevenue := evaluatePOSTimeSlotPromoPerformance(productID, weakest.Key, transactions)
+	if supportingTransactions <= 0 {
+		supportingTransactions = weakest.Transactions
 	}
 
 	discountPercent := 6.0
@@ -569,6 +668,12 @@ func buildPOSTimeSlotPromoCandidate(
 	}
 
 	score := shareGap + minFloat(float64(weakest.Transactions*8), 28)
+	marginAnalysis := buildPOSPricingMarginAnalysis(
+		product.AverageUnitPrice,
+		roundMoney(product.AverageUnitPrice*(1-(discountPercent/100))),
+		product.AverageUnitCost,
+		product.CostCoverage,
+	)
 	return posPromoCandidate{
 		RecommendationKey:        buildPOSPromoRecommendationKey("time-slot-boost", "time_slot", productID, weakest.Key),
 		StrategyKey:              "time-slot-boost",
@@ -578,11 +683,12 @@ func buildPOSTimeSlotPromoCandidate(
 		FocusProductName:         productName,
 		TimeSlotKey:              weakest.Key,
 		TimeSlotLabel:            weakest.Label,
-		SupportingTransactions:   weakest.Transactions,
-		CurrentRevenue:           weakest.Revenue,
+		SupportingTransactions:   supportingTransactions,
+		CurrentRevenue:           currentRevenue,
 		SuggestedDiscountPercent: discountPercent,
-		SuggestedPrice:           roundMoney(product.AverageUnitPrice * (1 - (discountPercent / 100))),
+		SuggestedPrice:           marginAnalysis.SuggestedPrice,
 		ExpectedLiftPercent:      minFloat(shareGap*0.75, 24),
+		MarginAnalysis:           marginAnalysis,
 		Reason: fmt.Sprintf(
 			"Slot %s baru menyumbang %d transaksi, jauh di bawah slot %s. %s paling sering muncul di slot ini dan cocok dijadikan happy-hour trigger.",
 			weakest.Label,
@@ -598,28 +704,42 @@ func buildPOSTimeSlotPromoCandidate(
 func buildPOSMultiBuyPromoCandidate(
 	transactions []models.Transaction,
 	productAggregates map[uint]*posPricingProductAggregate,
+	focusProductID uint,
 ) (posPromoCandidate, bool) {
 	if len(transactions) < 5 {
 		return posPromoCandidate{}, false
 	}
 
 	var hero *posPricingProductAggregate
-	for _, item := range productAggregates {
-		if item == nil || item.Transactions < 2 || item.AverageUnitPrice <= 0 {
-			continue
-		}
-
-		averageQtyPerTransaction := float64(item.Quantity) / float64(item.Transactions)
-		if averageQtyPerTransaction > 1.35 {
-			continue
-		}
-
-		if hero == nil || item.Transactions > hero.Transactions || (item.Transactions == hero.Transactions && item.Revenue > hero.Revenue) {
-			candidate := *item
+	if focusProductID > 0 {
+		hero = productAggregates[focusProductID]
+		if hero != nil {
+			candidate := *hero
 			hero = &candidate
 		}
+	} else {
+		for _, item := range productAggregates {
+			if item == nil || item.Transactions < 2 || item.AverageUnitPrice <= 0 {
+				continue
+			}
+
+			averageQtyPerTransaction := float64(item.Quantity) / float64(item.Transactions)
+			if averageQtyPerTransaction > 1.35 {
+				continue
+			}
+
+			if hero == nil || item.Transactions > hero.Transactions || (item.Transactions == hero.Transactions && item.Revenue > hero.Revenue) {
+				candidate := *item
+				hero = &candidate
+			}
+		}
 	}
-	if hero == nil {
+	if hero == nil || hero.Transactions < 2 || hero.AverageUnitPrice <= 0 {
+		return posPromoCandidate{}, false
+	}
+
+	averageQtyPerTransaction := float64(hero.Quantity) / float64(hero.Transactions)
+	if averageQtyPerTransaction > 1.35 {
 		return posPromoCandidate{}, false
 	}
 
@@ -629,6 +749,12 @@ func buildPOSMultiBuyPromoCandidate(
 	}
 
 	score := float64(hero.Transactions*10) + minFloat(hero.Revenue/50000, 20)
+	marginAnalysis := buildPOSPricingMarginAnalysis(
+		hero.AverageUnitPrice*2,
+		roundMoney((hero.AverageUnitPrice*2)*(1-(discountPercent/100))),
+		hero.AverageUnitCost*2,
+		hero.CostCoverage,
+	)
 	return posPromoCandidate{
 		RecommendationKey:        buildPOSPromoRecommendationKey("multi-buy-hero", "multi_buy", hero.ID, ""),
 		StrategyKey:              "multi-buy-hero",
@@ -639,8 +765,9 @@ func buildPOSMultiBuyPromoCandidate(
 		SupportingTransactions:   hero.Transactions,
 		CurrentRevenue:           hero.Revenue,
 		SuggestedDiscountPercent: discountPercent,
-		SuggestedPrice:           roundMoney((hero.AverageUnitPrice * 2) * (1 - (discountPercent / 100))),
+		SuggestedPrice:           marginAnalysis.SuggestedPrice,
 		ExpectedLiftPercent:      minFloat(12+(float64(hero.Transactions)*0.6), 22),
+		MarginAnalysis:           marginAnalysis,
 		Reason: fmt.Sprintf(
 			"%s sudah sering terjual, tetapi rata-rata hanya 1 unit per nota. Skema beli 2 hemat bisa menaikkan qty tanpa memangkas margin terlalu dalam.",
 			hero.Name,
@@ -650,25 +777,30 @@ func buildPOSMultiBuyPromoCandidate(
 	}, true
 }
 
-func buildPOSBundlePromoCandidate(bundles []posBundlingRecommendation) (posPromoCandidate, bool) {
+func buildPOSBundlePromoCandidate(bundles []posBundlingRecommendation, focusProductID uint) (posPromoCandidate, bool) {
 	if len(bundles) == 0 {
 		return posPromoCandidate{}, false
 	}
 
 	topBundle := bundles[0]
 	score := float64(topBundle.JointTransactionCount*10) + topBundle.AttachRatePercent
+	focusID := topBundle.PrimaryProductID
+	if focusProductID > 0 && (topBundle.PrimaryProductID == focusProductID || topBundle.PairedProductID == focusProductID) {
+		focusID = focusProductID
+	}
 	return posPromoCandidate{
-		RecommendationKey:        buildPOSPromoRecommendationKey("bundle-activation", "cross_sell", topBundle.PrimaryProductID, ""),
+		RecommendationKey:        buildPOSPromoRecommendationKey("bundle-activation", "cross_sell", focusID, ""),
 		StrategyKey:              "bundle-activation",
 		StrategyLabel:            "Promo pasangan favorit",
 		FocusType:                "cross_sell",
-		FocusProductID:           topBundle.PrimaryProductID,
+		FocusProductID:           focusID,
 		FocusProductName:         fmt.Sprintf("%s + %s", topBundle.PrimaryProductName, topBundle.PairedProductName),
 		SupportingTransactions:   topBundle.JointTransactionCount,
 		CurrentRevenue:           topBundle.AverageBundleValue * float64(topBundle.JointTransactionCount),
 		SuggestedDiscountPercent: topBundle.SuggestedDiscountPercent,
 		SuggestedPrice:           topBundle.SuggestedBundlePrice,
 		ExpectedLiftPercent:      minFloat(10+(topBundle.AttachRatePercent*0.25), 26),
+		MarginAnalysis:           topBundle.MarginAnalysis,
 		Reason: fmt.Sprintf(
 			"Pasangan %s dan %s sudah terbukti sering dibeli bareng. Promo bundling siap pakai akan lebih mudah dikomunikasikan ke kasir dan pelanggan.",
 			topBundle.PrimaryProductName,
@@ -677,6 +809,111 @@ func buildPOSBundlePromoCandidate(bundles []posBundlingRecommendation) (posPromo
 		ConfidenceLabel: resolvePOSPricingConfidenceLabel(score),
 		rankingScore:    score,
 	}, true
+}
+
+func transactionContainsPOSPricingProduct(transaction models.Transaction, productID uint) bool {
+	if productID == 0 {
+		return true
+	}
+	for _, item := range transaction.Items {
+		if item.ProductID == productID {
+			return true
+		}
+	}
+	return false
+}
+
+func resolvePOSPricingTransactionItemUnitCost(item models.TransactionItem) float64 {
+	if item.Variant != nil && item.Variant.BiayaProduksi > 0 {
+		return item.Variant.BiayaProduksi
+	}
+	if item.Product.LastPurchasePrice > 0 {
+		return item.Product.LastPurchasePrice
+	}
+	return 0
+}
+
+func averagePOSPricingCoverage(values ...float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	total := 0.0
+	count := 0.0
+	for _, value := range values {
+		if value < 0 {
+			continue
+		}
+		total += value
+		count++
+	}
+	if count == 0 {
+		return 0
+	}
+	return minFloat(total/count, 100)
+}
+
+func buildPOSPricingMarginAnalysis(currentPrice, suggestedPrice, estimatedHPP, costCoverage float64) posPricingMarginAnalysis {
+	currentMarginAmount := currentPrice - estimatedHPP
+	suggestedMarginAmount := suggestedPrice - estimatedHPP
+	currentMarginPercent := calculatePOSPricingMarginPercent(currentPrice, estimatedHPP)
+	suggestedMarginPercent := calculatePOSPricingMarginPercent(suggestedPrice, estimatedHPP)
+
+	return posPricingMarginAnalysis{
+		EstimatedHPP:           roundMoney(estimatedHPP),
+		BreakEvenPrice:         roundMoney(estimatedHPP),
+		MinimumSafePrice:       roundMoney(resolvePOSPricingMinimumSafePrice(estimatedHPP)),
+		CurrentPrice:           roundMoney(currentPrice),
+		CurrentMarginAmount:    roundSignedMoney(currentMarginAmount),
+		CurrentMarginPercent:   currentMarginPercent,
+		SuggestedPrice:         roundMoney(suggestedPrice),
+		SuggestedMarginAmount:  roundSignedMoney(suggestedMarginAmount),
+		SuggestedMarginPercent: suggestedMarginPercent,
+		CostCoveragePercent:    minFloat(costCoverage, 100),
+		CostCoverageLabel:      resolvePOSPricingCostCoverageLabel(costCoverage),
+		SafetyLabel:            resolvePOSPricingMarginSafetyLabel(costCoverage, suggestedMarginAmount, suggestedMarginPercent),
+	}
+}
+
+func calculatePOSPricingMarginPercent(price, estimatedHPP float64) float64 {
+	if price <= 0 {
+		return 0
+	}
+	return ((price - estimatedHPP) / price) * 100
+}
+
+func resolvePOSPricingMinimumSafePrice(estimatedHPP float64) float64 {
+	if estimatedHPP <= 0 {
+		return 0
+	}
+	return estimatedHPP / 0.9
+}
+
+func resolvePOSPricingCostCoverageLabel(costCoverage float64) string {
+	switch {
+	case costCoverage >= 99.9:
+		return "HPP lengkap"
+	case costCoverage >= 50:
+		return "HPP parsial"
+	case costCoverage > 0:
+		return "HPP tipis"
+	default:
+		return "HPP belum lengkap"
+	}
+}
+
+func resolvePOSPricingMarginSafetyLabel(costCoverage, suggestedMarginAmount, suggestedMarginPercent float64) string {
+	switch {
+	case costCoverage < 99.9:
+		return "Cek HPP"
+	case suggestedMarginAmount < 0:
+		return "Rugi"
+	case suggestedMarginPercent < 10:
+		return "Tipis"
+	case suggestedMarginPercent < 20:
+		return "Cukup"
+	default:
+		return "Aman"
+	}
 }
 
 func resolveTopPOSProductForTimeSlot(
@@ -1201,6 +1438,13 @@ func roundMoney(value float64) float64 {
 		return 0
 	}
 	return float64(int(value + 0.5))
+}
+
+func roundSignedMoney(value float64) float64 {
+	if value >= 0 {
+		return float64(int(value + 0.5))
+	}
+	return float64(int(value - 0.5))
 }
 
 func minFloat(left, right float64) float64 {

@@ -152,6 +152,14 @@ func EnsureAccountingSyncSchema(db *gorm.DB) error {
 	ensureAccountingSyncSchemaOnce.Do(func() {
 		statements := []string{
 			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS cashier_name VARCHAR(255)`,
+			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS customer_id BIGINT`,
+			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS customer_name VARCHAR(255)`,
+			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS subtotal DOUBLE PRECISION DEFAULT 0`,
+			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS discount_percent DOUBLE PRECISION DEFAULT 0`,
+			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS service_percent DOUBLE PRECISION DEFAULT 0`,
+			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS service DOUBLE PRECISION DEFAULT 0`,
+			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS tax_percent DOUBLE PRECISION DEFAULT 0`,
+			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS grand_total DOUBLE PRECISION DEFAULT 0`,
 			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS accounting_sync_status VARCHAR(16)`,
 			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS accounting_sync_error TEXT`,
 			`ALTER TABLE tbltransactions ADD COLUMN IF NOT EXISTS accounting_synced_at TIMESTAMP`,
@@ -341,11 +349,23 @@ func isSaleCOGSJournalLine(line models.JournalLine) bool {
 	}
 }
 
+func isOutletFeeJournalLine(line models.JournalLine) bool {
+	switch strings.ToLower(strings.TrimSpace(line.Description)) {
+	case strings.ToLower(outletFeeExpenseLineDescription), strings.ToLower(outletFeeBalanceLineDescription):
+		return true
+	default:
+		return false
+	}
+}
+
 func splitSaleJournalLines(lines []models.JournalLine) ([]models.JournalLine, []models.JournalLine, error) {
 	saleLines := make([]models.JournalLine, 0, len(lines))
 	cogsLines := make([]models.JournalLine, 0, 2)
 
 	for _, line := range cloneJournalLines(lines) {
+		if isOutletFeeJournalLine(line) {
+			continue
+		}
 		if isSaleCOGSJournalLine(line) {
 			cogsLines = append(cogsLines, line)
 			continue
@@ -530,12 +550,7 @@ func buildSaleSyncRequests(recordID uint) ([]AccountingSyncRequest, error) {
 		return nil, err
 	}
 
-	lines, feeAmount, err := AppendRequiredOutletFeeJournalLines(database.DB, transaction.OutletID, transaction.Total, journal.JournalLines)
-	if err != nil {
-		return nil, err
-	}
-
-	saleLines, cogsLines, err := splitSaleJournalLines(lines)
+	saleLines, cogsLines, err := splitSaleJournalLines(journal.JournalLines)
 	if err != nil {
 		return nil, err
 	}
@@ -555,17 +570,21 @@ func buildSaleSyncRequests(recordID uint) ([]AccountingSyncRequest, error) {
 			ExternalReference: externalReference,
 			LegacyType:        "general",
 			Metadata: map[string]interface{}{
-				"journal_entry_id":   journal.ID,
-				"cashier_id":         transaction.CashierID,
-				"cashier_name":       strings.TrimSpace(transaction.CashierName),
-				"payment_method":     transaction.PaymentMethod,
-				"tax":                transaction.Tax,
-				"discount":           transaction.Discount,
-				"status":             transaction.Status,
-				"journal_group":      "sale",
-				"outlet_fee_amount":  feeAmount,
-				"outlet_fee_posted":  feeAmount <= 0 || hasLineDescription(saleLines, outletFeeExpenseLineDescription),
-				"professional_split": true,
+				"journal_entry_id":     journal.ID,
+				"cashier_id":           transaction.CashierID,
+				"cashier_name":         strings.TrimSpace(transaction.CashierName),
+				"customer_id":          transaction.CustomerID,
+				"customer_name":        strings.TrimSpace(transaction.CustomerName),
+				"payment_method":       transaction.PaymentMethod,
+				"settlement_amount":    transaction.SettlementAmount,
+				"refund_credit_amount": transaction.RefundCreditAmount,
+				"refund_credit_code":   transaction.RefundCreditCode,
+				"tax":                  transaction.Tax,
+				"discount":             transaction.Discount,
+				"status":               transaction.Status,
+				"journal_group":        "sale",
+				"billing_model":        "monthly_subscription",
+				"professional_split":   true,
 			},
 			JournalLines:   saleLines,
 			IdempotencyKey: recordSyncKey,
@@ -588,6 +607,8 @@ func buildSaleSyncRequests(recordID uint) ([]AccountingSyncRequest, error) {
 				"journal_entry_id":   journal.ID,
 				"cashier_id":         transaction.CashierID,
 				"cashier_name":       strings.TrimSpace(transaction.CashierName),
+				"customer_id":        transaction.CustomerID,
+				"customer_name":      strings.TrimSpace(transaction.CustomerName),
 				"payment_method":     transaction.PaymentMethod,
 				"status":             transaction.Status,
 				"journal_group":      "cogs",
@@ -624,10 +645,18 @@ func buildRefundSyncRequest(recordID uint) (*AccountingSyncRequest, error) {
 		ExternalReference: fmt.Sprintf("POS-REFUND-%d", refund.ID),
 		LegacyType:        "general",
 		Metadata: map[string]interface{}{
-			"journal_entry_id": journal.ID,
-			"transaction_id":   refund.TransactionID,
-			"cashier_id":       refund.CashierID,
-			"cashier_name":     strings.TrimSpace(refund.CashierName),
+			"journal_entry_id":   journal.ID,
+			"transaction_id":     refund.TransactionID,
+			"cashier_id":         refund.CashierID,
+			"cashier_name":       strings.TrimSpace(refund.CashierName),
+			"refund_number":      refund.RefundNumber,
+			"customer_id":        refund.CustomerID,
+			"customer_name":      strings.TrimSpace(refund.CustomerName),
+			"settlement_type":    refund.SettlementType,
+			"settlement_method":  refund.SettlementMethod,
+			"settlement_status":  refund.SettlementStatus,
+			"store_credit_code":  refund.StoreCreditCode,
+			"replacement_txn_id": refund.ReplacementTransactionID,
 		},
 		JournalLines: cloneJournalLines(journal.JournalLines),
 	}, nil

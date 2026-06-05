@@ -33,6 +33,8 @@ type posApprovalRequestItemPayload struct {
 type posApprovalRequestPayload struct {
 	TransactionID       uint                            `json:"transaction_id"`
 	OutletID            uint                            `json:"outlet_id"`
+	SettlementType      string                          `json:"settlement_type"`
+	SettlementMethod    string                          `json:"settlement_method"`
 	Note                string                          `json:"note"`
 	RefundTotalOverride *float64                        `json:"refund_total_override,omitempty"`
 	Items               []posApprovalRequestItemPayload `json:"items"`
@@ -44,12 +46,14 @@ type createRefundApprovalRequestItemInput struct {
 }
 
 type createRefundApprovalRequestInput struct {
-	TransactionID uint                                   `json:"transaction_id"`
-	OutletID      uint                                   `json:"outlet_id"`
-	Reason        string                                 `json:"reason"`
-	Note          string                                 `json:"note"`
-	RequesterName string                                 `json:"requester_name"`
-	Items         []createRefundApprovalRequestItemInput `json:"items"`
+	TransactionID    uint                                   `json:"transaction_id"`
+	OutletID         uint                                   `json:"outlet_id"`
+	SettlementType   string                                 `json:"settlement_type"`
+	SettlementMethod string                                 `json:"settlement_method"`
+	Reason           string                                 `json:"reason"`
+	Note             string                                 `json:"note"`
+	RequesterName    string                                 `json:"requester_name"`
+	Items            []createRefundApprovalRequestItemInput `json:"items"`
 }
 
 type createVoidApprovalRequestInput struct {
@@ -81,8 +85,13 @@ type posApprovalTransactionSummary struct {
 
 type posApprovalRefundSummary struct {
 	ID                   uint       `json:"id"`
+	RefundNumber         string     `json:"refund_number"`
 	RefundTotal          float64    `json:"refund_total"`
 	Note                 string     `json:"note"`
+	SettlementType       string     `json:"settlement_type"`
+	SettlementMethod     string     `json:"settlement_method"`
+	SettlementStatus     string     `json:"settlement_status"`
+	StoreCreditCode      string     `json:"store_credit_code"`
 	CreatedAt            time.Time  `json:"created_at"`
 	AccountingSyncStatus string     `json:"accounting_sync_status"`
 	AccountingSyncError  string     `json:"accounting_sync_error"`
@@ -90,30 +99,32 @@ type posApprovalRefundSummary struct {
 }
 
 type posApprovalRequestResponse struct {
-	ID                   uint                            `json:"id"`
-	RequestType          string                          `json:"request_type"`
-	Status               string                          `json:"status"`
-	TransactionID        uint                            `json:"transaction_id"`
-	OutletID             uint                            `json:"outlet_id"`
-	RefundID             *uint                           `json:"refund_id"`
-	RequestTotal         float64                         `json:"request_total"`
-	ItemCount            int                             `json:"item_count"`
-	Reason               string                          `json:"reason"`
-	RequestNote          string                          `json:"request_note"`
-	ReviewNote           string                          `json:"review_note"`
-	RequestedByUserID    string                          `json:"requested_by_user_id"`
-	RequestedByActorType string                          `json:"requested_by_actor_type"`
-	RequestedByName      string                          `json:"requested_by_name"`
-	RequestedAt          time.Time                       `json:"requested_at"`
-	ReviewedByUserID     string                          `json:"reviewed_by_user_id"`
-	ReviewedByActorType  string                          `json:"reviewed_by_actor_type"`
-	ReviewedByName       string                          `json:"reviewed_by_name"`
-	ReviewedAt           *time.Time                      `json:"reviewed_at"`
-	ApprovedAt           *time.Time                      `json:"approved_at"`
-	RejectedAt           *time.Time                      `json:"rejected_at"`
-	RequestedItems       []posApprovalRequestItemPayload `json:"requested_items"`
-	Transaction          *posApprovalTransactionSummary  `json:"transaction"`
-	Refund               *posApprovalRefundSummary       `json:"refund"`
+	ID                        uint                            `json:"id"`
+	RequestType               string                          `json:"request_type"`
+	Status                    string                          `json:"status"`
+	TransactionID             uint                            `json:"transaction_id"`
+	OutletID                  uint                            `json:"outlet_id"`
+	RefundID                  *uint                           `json:"refund_id"`
+	RequestTotal              float64                         `json:"request_total"`
+	ItemCount                 int                             `json:"item_count"`
+	Reason                    string                          `json:"reason"`
+	RequestNote               string                          `json:"request_note"`
+	ReviewNote                string                          `json:"review_note"`
+	RequestedByUserID         string                          `json:"requested_by_user_id"`
+	RequestedByActorType      string                          `json:"requested_by_actor_type"`
+	RequestedByName           string                          `json:"requested_by_name"`
+	RequestedAt               time.Time                       `json:"requested_at"`
+	ReviewedByUserID          string                          `json:"reviewed_by_user_id"`
+	ReviewedByActorType       string                          `json:"reviewed_by_actor_type"`
+	ReviewedByName            string                          `json:"reviewed_by_name"`
+	ReviewedAt                *time.Time                      `json:"reviewed_at"`
+	ApprovedAt                *time.Time                      `json:"approved_at"`
+	RejectedAt                *time.Time                      `json:"rejected_at"`
+	RequestedSettlementType   string                          `json:"requested_settlement_type"`
+	RequestedSettlementMethod string                          `json:"requested_settlement_method"`
+	RequestedItems            []posApprovalRequestItemPayload `json:"requested_items"`
+	Transaction               *posApprovalTransactionSummary  `json:"transaction"`
+	Refund                    *posApprovalRefundSummary       `json:"refund"`
 }
 
 type transactionItemAggregate struct {
@@ -335,6 +346,9 @@ func ensurePOSApprovalDependencies() error {
 	if err := services.EnsureAccountingSyncSchema(database.DB); err != nil {
 		return err
 	}
+	if err := services.EnsureRefundSettlementSchema(database.DB); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -458,9 +472,14 @@ func hasPendingApprovalRequest(tx *gorm.DB, transactionID uint) (bool, error) {
 	return count > 0, nil
 }
 
-func hasApprovedVoidRequest(tx *gorm.DB, transactionID uint, excludeRequestID uint) (bool, error) {
+func hasApprovedApprovalRequest(tx *gorm.DB, transactionID uint, requestType string, excludeRequestID uint) (bool, error) {
 	query := tx.Model(&models.POSApprovalRequest{}).
-		Where("transaction_id = ? AND request_type = ? AND status = ?", transactionID, services.POSApprovalRequestTypeVoid, services.POSApprovalStatusApproved)
+		Where(
+			"transaction_id = ? AND request_type = ? AND status = ?",
+			transactionID,
+			requestType,
+			services.POSApprovalStatusApproved,
+		)
 	if excludeRequestID != 0 {
 		query = query.Where("id <> ?", excludeRequestID)
 	}
@@ -470,6 +489,10 @@ func hasApprovedVoidRequest(tx *gorm.DB, transactionID uint, excludeRequestID ui
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func hasApprovedVoidRequest(tx *gorm.DB, transactionID uint, excludeRequestID uint) (bool, error) {
+	return hasApprovedApprovalRequest(tx, transactionID, services.POSApprovalRequestTypeVoid, excludeRequestID)
 }
 
 func calculateTransactionFinalTotal(transaction models.Transaction) float64 {
@@ -511,8 +534,13 @@ func buildApprovalTransactionSummary(transaction models.Transaction) *posApprova
 func buildApprovalRefundSummary(refund models.Refund) *posApprovalRefundSummary {
 	return &posApprovalRefundSummary{
 		ID:                   refund.ID,
+		RefundNumber:         refund.RefundNumber,
 		RefundTotal:          refund.RefundTotal,
 		Note:                 refund.Note,
+		SettlementType:       refund.SettlementType,
+		SettlementMethod:     refund.SettlementMethod,
+		SettlementStatus:     refund.SettlementStatus,
+		StoreCreditCode:      refund.StoreCreditCode,
 		CreatedAt:            refund.CreatedAt,
 		AccountingSyncStatus: refund.AccountingSyncStatus,
 		AccountingSyncError:  refund.AccountingSyncError,
@@ -544,28 +572,30 @@ func buildApprovalResponse(
 	)
 
 	response := posApprovalRequestResponse{
-		ID:                   request.ID,
-		RequestType:          request.RequestType,
-		Status:               request.Status,
-		TransactionID:        request.TransactionID,
-		OutletID:             request.OutletID,
-		RefundID:             request.RefundID,
-		RequestTotal:         request.RequestTotal,
-		ItemCount:            request.ItemCount,
-		Reason:               request.Reason,
-		RequestNote:          request.RequestNote,
-		ReviewNote:           request.ReviewNote,
-		RequestedByUserID:    request.RequestedByUserID,
-		RequestedByActorType: request.RequestedByActorType,
-		RequestedByName:      requestedByName,
-		RequestedAt:          request.RequestedAt,
-		ReviewedByUserID:     request.ReviewedByUserID,
-		ReviewedByActorType:  request.ReviewedByActorType,
-		ReviewedByName:       reviewedByName,
-		ReviewedAt:           request.ReviewedAt,
-		ApprovedAt:           request.ApprovedAt,
-		RejectedAt:           request.RejectedAt,
-		RequestedItems:       payload.Items,
+		ID:                        request.ID,
+		RequestType:               request.RequestType,
+		Status:                    request.Status,
+		TransactionID:             request.TransactionID,
+		OutletID:                  request.OutletID,
+		RefundID:                  request.RefundID,
+		RequestTotal:              request.RequestTotal,
+		ItemCount:                 request.ItemCount,
+		Reason:                    request.Reason,
+		RequestNote:               request.RequestNote,
+		ReviewNote:                request.ReviewNote,
+		RequestedByUserID:         request.RequestedByUserID,
+		RequestedByActorType:      request.RequestedByActorType,
+		RequestedByName:           requestedByName,
+		RequestedAt:               request.RequestedAt,
+		ReviewedByUserID:          request.ReviewedByUserID,
+		ReviewedByActorType:       request.ReviewedByActorType,
+		ReviewedByName:            reviewedByName,
+		ReviewedAt:                request.ReviewedAt,
+		ApprovedAt:                request.ApprovedAt,
+		RejectedAt:                request.RejectedAt,
+		RequestedSettlementType:   payload.SettlementType,
+		RequestedSettlementMethod: payload.SettlementMethod,
+		RequestedItems:            payload.Items,
 	}
 
 	if transaction != nil {
@@ -629,7 +659,6 @@ func CreateRefundApprovalRequest(c *gin.Context) {
 		if hasVoid {
 			return fmt.Errorf("transaction has already been voided")
 		}
-
 		requestedItems, refundItems, err := buildRefundRequestItemsFromInput(loadedTransaction, input.Items)
 		if err != nil {
 			return err
@@ -639,10 +668,16 @@ func CreateRefundApprovalRequest(c *gin.Context) {
 		}
 
 		payload := posApprovalRequestPayload{
-			TransactionID: loadedTransaction.ID,
-			OutletID:      loadedTransaction.OutletID,
-			Note:          strings.TrimSpace(input.Note),
-			Items:         requestedItems,
+			TransactionID:  loadedTransaction.ID,
+			OutletID:       loadedTransaction.OutletID,
+			SettlementType: services.NormalizeRefundSettlementType(input.SettlementType),
+			SettlementMethod: services.ResolveRefundSettlementMethod(
+				loadedTransaction.PaymentMethod,
+				input.SettlementType,
+				input.SettlementMethod,
+			),
+			Note:  strings.TrimSpace(input.Note),
+			Items: requestedItems,
 		}
 		payloadBytes, err := json.Marshal(payload)
 		if err != nil {
@@ -756,6 +791,13 @@ func CreateVoidApprovalRequest(c *gin.Context) {
 		}
 		if hasVoid {
 			return fmt.Errorf("transaction has already been voided")
+		}
+		hasApprovedRefund, err := hasApprovedApprovalRequest(tx, loadedTransaction.ID, services.POSApprovalRequestTypeRefund, 0)
+		if err != nil {
+			return err
+		}
+		if hasApprovedRefund {
+			return fmt.Errorf("transaction already has an approved refund request")
 		}
 
 		requestedItems, refundItems, err := buildVoidRequestItems(loadedTransaction)
@@ -1001,9 +1043,12 @@ func ApprovePOSApprovalRequest(c *gin.Context) {
 			TransactionID:        request.TransactionID,
 			OutletID:             request.OutletID,
 			CashierName:          requestedByName,
+			SettlementType:       payload.SettlementType,
+			SettlementMethod:     payload.SettlementMethod,
 			Note:                 payload.Note,
 			Items:                items,
 			RefundTotalOverride:  payload.RefundTotalOverride,
+			ApprovalRequestID:    &request.ID,
 			AccountingSyncStatus: services.AccountingSyncStatusPending,
 		})
 		if err != nil {
@@ -1080,10 +1125,10 @@ func ApprovePOSApprovalRequest(c *gin.Context) {
 			Summary:      fmt.Sprintf("Refund #%d dibuat dari approval request #%d", refund.ID, request.ID),
 			Note:         refund.Note,
 			Metadata: gin.H{
-				"transaction_id":       refund.TransactionID,
-				"approval_request_id":  request.ID,
-				"request_type":         request.RequestType,
-				"refund_total":         refund.RefundTotal,
+				"transaction_id":      refund.TransactionID,
+				"approval_request_id": request.ID,
+				"request_type":        request.RequestType,
+				"refund_total":        refund.RefundTotal,
 			},
 			After: gin.H{
 				"refund": refund,
@@ -1106,10 +1151,10 @@ func ApprovePOSApprovalRequest(c *gin.Context) {
 					"refund_id":           refund.ID,
 				},
 				After: gin.H{
-					"transaction_id":             transaction.ID,
-					"document_status":            transaction.DocumentStatus,
-					"void_reason":                transaction.VoidReason,
-					"void_approval_request_id":   transaction.VoidApprovalRequestID,
+					"transaction_id":           transaction.ID,
+					"document_status":          transaction.DocumentStatus,
+					"void_reason":              transaction.VoidReason,
+					"void_approval_request_id": transaction.VoidApprovalRequestID,
 				},
 			}); err != nil {
 				return err

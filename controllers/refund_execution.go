@@ -15,9 +15,14 @@ type refundExecutionInput struct {
 	OutletID             uint
 	CashierID            uint
 	CashierName          string
+	CustomerID           *uint
+	CustomerName         string
+	SettlementType       string
+	SettlementMethod     string
 	Note                 string
 	Items                []models.RefundItem
 	RefundTotalOverride  *float64
+	ApprovalRequestID    *uint
 	AccountingSyncStatus string
 }
 
@@ -59,6 +64,18 @@ func executeRefundDocument(tx *gorm.DB, input refundExecutionInput) (models.Refu
 		return refund, journal, fmt.Errorf("transaction has already been voided")
 	}
 
+	customerID := input.CustomerID
+	if customerID == nil && originalTxn.CustomerID != nil && *originalTxn.CustomerID > 0 {
+		customerID = originalTxn.CustomerID
+	}
+	customerName := strings.TrimSpace(input.CustomerName)
+	if customerName == "" {
+		customerName = strings.TrimSpace(originalTxn.CustomerName)
+	}
+
+	settlementType := services.NormalizeRefundSettlementType(input.SettlementType)
+	settlementMethod := services.ResolveRefundSettlementMethod(originalTxn.PaymentMethod, settlementType, input.SettlementMethod)
+
 	refundPlan, err := services.PrepareRefundInventoryPlan(tx, input.TransactionID, input.OutletID, input.Items)
 	if err != nil {
 		return refund, journal, err
@@ -71,7 +88,13 @@ func executeRefundDocument(tx *gorm.DB, input refundExecutionInput) (models.Refu
 	if err != nil {
 		return refund, journal, err
 	}
-	cashAccount, err := services.ResolveSaleSettlementAccount(tx, input.OutletID, originalTxn.PaymentMethod)
+	var settlementAccount models.Account
+	switch settlementType {
+	case services.RefundSettlementTypeStoreCredit, services.RefundSettlementTypeExchangeRepurchase:
+		settlementAccount, err = services.ResolveRefundCreditLiabilityAccount(tx, input.OutletID)
+	default:
+		settlementAccount, err = services.ResolveSaleSettlementAccount(tx, input.OutletID, settlementMethod)
+	}
 	if err != nil {
 		return refund, journal, err
 	}
@@ -84,10 +107,14 @@ func executeRefundDocument(tx *gorm.DB, input refundExecutionInput) (models.Refu
 			Description: "Pembatalan penjualan",
 		},
 		{
-			AccountID:   cashAccount.ID,
-			Debit:       0,
-			Credit:      refundTotal,
-			Description: "Pengembalian dana ke pelanggan",
+			AccountID: settlementAccount.ID,
+			Debit:     0,
+			Credit:    refundTotal,
+			Description: map[string]string{
+				services.RefundSettlementTypeCashRefund:         "Pengembalian dana ke pelanggan",
+				services.RefundSettlementTypeStoreCredit:        "Penerbitan saldo retur / voucher",
+				services.RefundSettlementTypeExchangeRepurchase: "Saldo retur untuk belanja kembali",
+			}[settlementType],
 		},
 	}
 
@@ -122,9 +149,13 @@ func executeRefundDocument(tx *gorm.DB, input refundExecutionInput) (models.Refu
 	}
 
 	journal = models.JournalEntry{
-		OutletID:     input.OutletID,
-		Reference:    fmt.Sprintf("Refund Txn #%d", originalTxn.ID),
-		Description:  "Refund transaksi penjualan",
+		OutletID:  input.OutletID,
+		Reference: fmt.Sprintf("Refund Txn #%d", originalTxn.ID),
+		Description: map[string]string{
+			services.RefundSettlementTypeCashRefund:         "Refund transaksi penjualan",
+			services.RefundSettlementTypeStoreCredit:        "Refund transaksi menjadi saldo retur",
+			services.RefundSettlementTypeExchangeRepurchase: "Refund transaksi untuk belanja kembali",
+		}[settlementType],
 		EntryDate:    time.Now(),
 		JournalLines: lines,
 	}
@@ -142,14 +173,27 @@ func executeRefundDocument(tx *gorm.DB, input refundExecutionInput) (models.Refu
 		OutletID:              input.OutletID,
 		CashierID:             input.CashierID,
 		CashierName:           cashierName,
+		CustomerID:            customerID,
+		CustomerName:          customerName,
 		RefundTotal:           refundTotal,
 		Note:                  strings.TrimSpace(input.Note),
+		SettlementType:        settlementType,
+		SettlementMethod:      settlementMethod,
+		SettlementStatus:      services.ResolveRefundSettlementStatus(settlementType, refundTotal),
+		ApprovalRequestID:     input.ApprovalRequestID,
 		JournalEntryID:        &journal.ID,
 		AccountingSyncStatus:  accountingSyncStatus,
 		AccountingIdempotency: services.BuildAccountingIdempotencyKey("pos_refund", 0),
 		CreatedAt:             time.Now(),
 	}
 	if err := tx.Create(&refund).Error; err != nil {
+		return refund, journal, err
+	}
+	refund.RefundNumber = services.BuildRefundNumber(refund.OutletID, refund.ID)
+	refund.SettlementStatus = services.ResolveRefundSettlementStatus(settlementType, refundTotal)
+	if err := tx.Model(&refund).Updates(map[string]interface{}{
+		"refund_number": refund.RefundNumber,
+	}).Error; err != nil {
 		return refund, journal, err
 	}
 	refund.AccountingIdempotency = services.BuildAccountingIdempotencyKey("pos_refund", refund.ID)
@@ -163,6 +207,36 @@ func executeRefundDocument(tx *gorm.DB, input refundExecutionInput) (models.Refu
 	for _, item := range input.Items {
 		item.RefundID = refund.ID
 		if err := tx.Create(&item).Error; err != nil {
+			return refund, journal, err
+		}
+	}
+
+	if settlementType == services.RefundSettlementTypeStoreCredit || settlementType == services.RefundSettlementTypeExchangeRepurchase {
+		creditCode := services.BuildRefundStoreCreditCode(refund.OutletID, refund.ID)
+		credit := models.RefundStoreCredit{
+			RefundID:        refund.ID,
+			OutletID:        refund.OutletID,
+			TransactionID:   refund.TransactionID,
+			CustomerID:      customerID,
+			CustomerName:    customerName,
+			CreditCode:      creditCode,
+			OriginalAmount:  refundTotal,
+			RemainingAmount: refundTotal,
+			Status:          services.RefundStoreCreditStatusActive,
+			Note:            strings.TrimSpace(input.Note),
+			IssuedAt:        time.Now(),
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		}
+		if err := tx.Create(&credit).Error; err != nil {
+			return refund, journal, err
+		}
+		refund.StoreCreditCode = creditCode
+		refund.SettlementStatus = services.ResolveRefundSettlementStatus(settlementType, credit.RemainingAmount)
+		if err := tx.Model(&refund).Updates(map[string]interface{}{
+			"store_credit_code": refund.StoreCreditCode,
+			"settlement_status": refund.SettlementStatus,
+		}).Error; err != nil {
 			return refund, journal, err
 		}
 	}

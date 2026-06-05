@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,12 +14,16 @@ import (
 )
 
 type RefundInput struct {
-	TransactionID uint                `json:"transaction_id"`
-	OutletID      uint                `json:"outlet_id"`
-	CashierID     uint                `json:"cashier_id"`
-	CashierName   string              `json:"cashier_name"`
-	Note          string              `json:"note"`
-	Items         []models.RefundItem `json:"items"`
+	TransactionID    uint                `json:"transaction_id"`
+	OutletID         uint                `json:"outlet_id"`
+	CashierID        uint                `json:"cashier_id"`
+	CashierName      string              `json:"cashier_name"`
+	CustomerID       *uint               `json:"customer_id"`
+	CustomerName     string              `json:"customer_name"`
+	SettlementType   string              `json:"settlement_type"`
+	SettlementMethod string              `json:"settlement_method"`
+	Note             string              `json:"note"`
+	Items            []models.RefundItem `json:"items"`
 }
 
 func CreateRefund(c *gin.Context) {
@@ -38,6 +43,11 @@ func CreateRefund(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare inventory schema"})
 		return
 	}
+	if err := services.EnsureRefundSettlementSchema(database.DB); err != nil {
+		utils.Log.Errorf("❌ Failed to ensure refund settlement schema: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare refund settlement schema"})
+		return
+	}
 
 	var (
 		refund models.Refund
@@ -49,6 +59,10 @@ func CreateRefund(c *gin.Context) {
 			OutletID:             input.OutletID,
 			CashierID:            input.CashierID,
 			CashierName:          input.CashierName,
+			CustomerID:           input.CustomerID,
+			CustomerName:         input.CustomerName,
+			SettlementType:       input.SettlementType,
+			SettlementMethod:     input.SettlementMethod,
 			Note:                 input.Note,
 			Items:                input.Items,
 			AccountingSyncStatus: services.AccountingSyncStatusPending,
@@ -65,10 +79,13 @@ func CreateRefund(c *gin.Context) {
 			Summary:      "Refund dibuat langsung dari transaksi POS",
 			Note:         refund.Note,
 			Metadata: gin.H{
-				"transaction_id": refund.TransactionID,
-				"cashier_id":     refund.CashierID,
-				"cashier_name":   refund.CashierName,
-				"refund_total":   refund.RefundTotal,
+				"transaction_id":    refund.TransactionID,
+				"cashier_id":        refund.CashierID,
+				"cashier_name":      refund.CashierName,
+				"refund_total":      refund.RefundTotal,
+				"settlement_type":   refund.SettlementType,
+				"settlement_method": refund.SettlementMethod,
+				"store_credit_code": refund.StoreCreditCode,
 			},
 			After: gin.H{
 				"refund": refund,
@@ -90,20 +107,30 @@ func CreateRefund(c *gin.Context) {
 	if syncErr != nil {
 		utils.Log.Warnf("refund %d synced locally but failed to post accounting journal: %v", refund.ID, syncErr)
 		c.JSON(http.StatusOK, gin.H{
+			"refund_id":                  refund.ID,
+			"refund_number":              refund.RefundNumber,
 			"message":                    "Refund berhasil diproses dan jurnal dicatat",
 			"accounting_sync_status":     services.AccountingSyncStatusFailed,
 			"accounting_sync_error":      syncErr.Error(),
 			"accounting_idempotency_key": services.BuildAccountingIdempotencyKey("pos_refund", refund.ID),
+			"settlement_type":            refund.SettlementType,
+			"settlement_method":          refund.SettlementMethod,
+			"store_credit_code":          refund.StoreCreditCode,
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"refund_id":                  refund.ID,
+		"refund_number":              refund.RefundNumber,
 		"message":                    "Refund berhasil diproses dan jurnal dicatat",
 		"accounting_sync_status":     syncResult.Status,
 		"accounting_idempotency_key": syncResult.IdempotencyKey,
 		"accounting_journal_id":      syncResult.JournalID,
 		"accounting_already_posted":  syncResult.AlreadyPosted,
+		"settlement_type":            refund.SettlementType,
+		"settlement_method":          refund.SettlementMethod,
+		"store_credit_code":          refund.StoreCreditCode,
 	})
 }
 
@@ -186,4 +213,66 @@ func GetRefundReport(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, refunds)
+}
+
+func GetRefundStoreCredits(c *gin.Context) {
+	if err := services.EnsureRefundSettlementSchema(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	outletID := c.Query("outlet_id")
+	if outletID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "outlet_id is required"})
+		return
+	}
+
+	query := database.DB.Model(&models.RefundStoreCredit{}).Where("outlet_id = ?", outletID)
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		query = query.Where("status = ?", status)
+	} else {
+		query = query.Where("status = ?", services.RefundStoreCreditStatusActive)
+	}
+	if customerID := strings.TrimSpace(c.Query("customer_id")); customerID != "" {
+		query = query.Where("customer_id = ?", customerID)
+	}
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		like := "%" + search + "%"
+		query = query.Where(
+			"credit_code ILIKE ? OR COALESCE(customer_name, '') ILIKE ? OR CAST(transaction_id AS TEXT) ILIKE ? OR CAST(refund_id AS TEXT) ILIKE ?",
+			like, like, like, like,
+		)
+	}
+
+	var credits []models.RefundStoreCredit
+	if err := query.Order("issued_at DESC, id DESC").Find(&credits).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal mengambil saldo retur"})
+		return
+	}
+
+	c.JSON(http.StatusOK, credits)
+}
+
+func LookupRefundStoreCredit(c *gin.Context) {
+	if err := services.EnsureRefundSettlementSchema(database.DB); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	outletID := strings.TrimSpace(c.Query("outlet_id"))
+	code := strings.TrimSpace(c.Query("code"))
+	if outletID == "" || code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "outlet_id and code are required"})
+		return
+	}
+
+	var credit models.RefundStoreCredit
+	if err := database.DB.
+		Where("outlet_id = ? AND credit_code = ?", outletID, code).
+		First(&credit).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Saldo retur tidak ditemukan"})
+		return
+	}
+
+	c.JSON(http.StatusOK, credit)
 }

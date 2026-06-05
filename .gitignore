@@ -2,6 +2,7 @@
 .env
 
 # Build artifacts
+build/
 reconcile_accounting_sync
 remap_legacy_sale_accounts
 *.exe

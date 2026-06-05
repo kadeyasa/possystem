@@ -49,6 +49,30 @@ func validateProductInventoryConfig(product *models.Product) error {
 	return nil
 }
 
+func normalizeProductCode(code string) string {
+	return strings.TrimSpace(code)
+}
+
+func ensureProductCodeAvailable(outletID uint, code string, excludeID uint) error {
+	normalizedCode := normalizeProductCode(code)
+
+	var count int64
+	query := database.DB.Model(&models.Product{}).
+		Where("outlet_id = ? AND code = ? AND deleted_at IS NULL", outletID, normalizedCode)
+	if excludeID > 0 {
+		query = query.Where("id <> ?", excludeID)
+	}
+
+	if err := query.Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("product code already exists in this outlet")
+	}
+
+	return nil
+}
+
 // Create Product
 func CreateProduct(c *gin.Context) {
 	var input models.Product
@@ -70,6 +94,7 @@ func CreateProduct(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "item_type must be raw_material, resale_item, finished_good, or service"})
 		return
 	}
+	input.Code = normalizeProductCode(input.Code)
 	applyProductInventoryDefaults(&input)
 	if err := validateProductInventoryConfig(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -84,18 +109,15 @@ func CreateProduct(c *gin.Context) {
 		return
 	}
 
-	// ✅ Check if product with same code already exists
-	var count int64
-	if err := database.DB.Model(&models.Product{}).
-		Where("code = ?", input.Code).
-		Count(&count).Error; err != nil {
+	// ✅ Check if product with same code already exists in the same outlet
+	if err := ensureProductCodeAvailable(input.OutletID, input.Code, 0); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			utils.Log.Warnf("❌ Product code already exists in outlet %d: %s", input.OutletID, input.Code)
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		utils.Log.Warnf("❌ Query error on code check: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Error checking product code"})
-		return
-	}
-	if count > 0 {
-		utils.Log.Warnf("❌ Product code already exists: %v", count)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Product code already exists"})
 		return
 	}
 
@@ -285,8 +307,23 @@ func UpdateProduct(c *gin.Context) {
 		return
 	}
 
+	targetOutletID := input.OutletID
+	if targetOutletID == 0 {
+		targetOutletID = product.OutletID
+	}
+	input.Code = normalizeProductCode(input.Code)
+	if err := ensureProductCodeAvailable(targetOutletID, input.Code, product.ID); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		utils.Log.Errorf("❌ Failed to validate product code uniqueness: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to validate product code"})
+		return
+	}
+
 	updates := map[string]interface{}{
-		"outlet_id":               input.OutletID,
+		"outlet_id":               targetOutletID,
 		"category_id":             input.CategoryID,
 		"code":                    input.Code,
 		"name":                    input.Name,
@@ -307,10 +344,7 @@ func UpdateProduct(c *gin.Context) {
 		return
 	}
 
-	outletID := input.OutletID
-	if outletID == 0 {
-		outletID = product.OutletID
-	}
+	outletID := targetOutletID
 	switch input.ItemType {
 	case services.ProductItemTypeFinishedGood:
 		if _, err := services.SyncFinishedGoodRecipeCost(database.DB, outletID, product.ID); err != nil {

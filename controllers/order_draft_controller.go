@@ -33,6 +33,7 @@ type orderDraftInput struct {
 	CashierName             string                `json:"cashier_name"`
 	CustomerName            string                `json:"customer_name"`
 	CustomerPhone           string                `json:"customer_phone"`
+	CustomerID              *uint                 `json:"customer_id"`
 	OrderLabel              string                `json:"order_label"`
 	TableLabel              string                `json:"table_label"`
 	ServiceMode             string                `json:"service_mode"`
@@ -46,6 +47,8 @@ type orderDraftInput struct {
 	Subtotal                float64               `json:"subtotal"`
 	DiscountPercent         float64               `json:"discount_percent"`
 	Discount                float64               `json:"discount"`
+	ServicePercent          float64               `json:"service_percent"`
+	Service                 float64               `json:"service"`
 	TaxPercent              float64               `json:"tax_percent"`
 	Tax                     float64               `json:"tax"`
 	Total                   float64               `json:"total"`
@@ -81,7 +84,22 @@ type publicPaymentGatewayResponse struct {
 const kitchenEmployeeRoleCode = 3
 
 func isRestaurantOrderDraftServiceMode(value string) bool {
-	return services.NormalizePOSOrderDraftServiceMode(value) != services.POSOrderDraftServiceModeLaundryHold
+	switch services.NormalizePOSOrderDraftServiceMode(value) {
+	case services.POSOrderDraftServiceModeDineIn,
+		services.POSOrderDraftServiceModeTakeAway,
+		services.POSOrderDraftServiceModeDelivery:
+		return true
+	default:
+		return false
+	}
+}
+
+func restaurantOrderDraftServiceModes() []string {
+	return []string{
+		services.POSOrderDraftServiceModeDineIn,
+		services.POSOrderDraftServiceModeTakeAway,
+		services.POSOrderDraftServiceModeDelivery,
+	}
 }
 
 func isKitchenManagedOrderDraftStatus(value string) bool {
@@ -163,6 +181,16 @@ func parseOrderDraftFulfillmentStatuses(value string) []string {
 func clampOrderDraftAmount(value float64) float64 {
 	if value < 0 {
 		return 0
+	}
+	return value
+}
+
+func clampOrderDraftPercent(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 100 {
+		return 100
 	}
 	return value
 }
@@ -280,7 +308,7 @@ func loadPublicOccupiedTables(tx *gorm.DB, outletID uint) ([]publicRestaurantTab
 		Select("id", "table_label", "order_label", "fulfillment_status", "updated_at", "created_at").
 		Where("outlet_id = ?", outletID).
 		Where("status = ?", services.POSOrderDraftStatusOpen).
-		Where("service_mode <> ?", services.POSOrderDraftServiceModeLaundryHold).
+		Where("service_mode IN ?", restaurantOrderDraftServiceModes()).
 		Where("COALESCE(BTRIM(table_label), '') <> ''").
 		Order("updated_at DESC, id DESC").
 		Find(&drafts).Error; err != nil {
@@ -326,7 +354,7 @@ func isRestaurantTableCurrentlyOccupied(tx *gorm.DB, outletID uint, tableLabel s
 		Select("id", "table_label").
 		Where("outlet_id = ?", outletID).
 		Where("status = ?", services.POSOrderDraftStatusOpen).
-		Where("service_mode <> ?", services.POSOrderDraftServiceModeLaundryHold).
+		Where("service_mode IN ?", restaurantOrderDraftServiceModes()).
 		Where("COALESCE(BTRIM(table_label), '') <> ''").
 		Find(&drafts).Error; err != nil {
 		return false, err
@@ -419,21 +447,32 @@ func saveOrderDraftRecord(tx *gorm.DB, existingID uint, input orderDraftInput, c
 		subtotal = clampOrderDraftAmount(input.Subtotal)
 	}
 
-	discountPercent := clampOrderDraftAmount(input.DiscountPercent)
+	discountPercent := clampOrderDraftPercent(input.DiscountPercent)
 	discount := clampOrderDraftAmount(input.Discount)
 	if discount == 0 && discountPercent > 0 {
 		discount = subtotal * (discountPercent / 100.0)
 	}
 
-	taxPercent := clampOrderDraftAmount(input.TaxPercent)
+	netSubtotal := subtotal - discount
+	if netSubtotal < 0 {
+		netSubtotal = 0
+	}
+
+	servicePercent := clampOrderDraftPercent(input.ServicePercent)
+	service := clampOrderDraftAmount(input.Service)
+	if service == 0 && servicePercent > 0 {
+		service = netSubtotal * (servicePercent / 100.0)
+	}
+
+	taxPercent := clampOrderDraftPercent(input.TaxPercent)
 	tax := clampOrderDraftAmount(input.Tax)
 	if tax == 0 && taxPercent > 0 {
-		tax = subtotal * (taxPercent / 100.0)
+		tax = (netSubtotal + service) * (taxPercent / 100.0)
 	}
 
 	total := clampOrderDraftAmount(input.Total)
 	if total == 0 {
-		total = subtotal - discount + tax
+		total = netSubtotal + service + tax
 	}
 
 	orderDraft := models.POSOrderDraft{}
@@ -481,9 +520,14 @@ func saveOrderDraftRecord(tx *gorm.DB, existingID uint, input orderDraftInput, c
 	orderDraft.CashierName = cashierName
 	orderDraft.CustomerName = strings.TrimSpace(input.CustomerName)
 	orderDraft.CustomerPhone = strings.TrimSpace(input.CustomerPhone)
+	orderDraft.CustomerID = input.CustomerID
 	orderDraft.OrderLabel = buildOrderDraftLabel(input, source)
-	orderDraft.TableLabel = strings.TrimSpace(input.TableLabel)
 	orderDraft.ServiceMode = services.NormalizePOSOrderDraftServiceMode(input.ServiceMode)
+	if isRestaurantOrderDraftServiceMode(orderDraft.ServiceMode) {
+		orderDraft.TableLabel = strings.TrimSpace(input.TableLabel)
+	} else {
+		orderDraft.TableLabel = ""
+	}
 	orderDraft.Source = services.NormalizePOSOrderDraftSource(source)
 	orderDraft.Status = services.POSOrderDraftStatusOpen
 	fulfillmentStatus = services.ResolvePOSOrderDraftFulfillmentStatus(orderDraft.ServiceMode, fulfillmentStatus)
@@ -496,6 +540,8 @@ func saveOrderDraftRecord(tx *gorm.DB, existingID uint, input orderDraftInput, c
 	orderDraft.Subtotal = subtotal
 	orderDraft.DiscountPercent = discountPercent
 	orderDraft.Discount = discount
+	orderDraft.ServicePercent = servicePercent
+	orderDraft.Service = service
 	orderDraft.TaxPercent = taxPercent
 	orderDraft.Tax = tax
 	orderDraft.Total = total
@@ -508,6 +554,7 @@ func saveOrderDraftRecord(tx *gorm.DB, existingID uint, input orderDraftInput, c
 			"CashierName",
 			"CustomerName",
 			"CustomerPhone",
+			"CustomerID",
 			"OrderLabel",
 			"TableLabel",
 			"ServiceMode",
@@ -522,6 +569,8 @@ func saveOrderDraftRecord(tx *gorm.DB, existingID uint, input orderDraftInput, c
 			"Subtotal",
 			"DiscountPercent",
 			"Discount",
+			"ServicePercent",
+			"Service",
 			"TaxPercent",
 			"Tax",
 			"Total",
@@ -791,7 +840,7 @@ func GetKitchenOrderDraftQueue(c *gin.Context) {
 		Preload("Items").
 		Where("outlet_id = ?", outletID).
 		Where("status = ?", services.POSOrderDraftStatusOpen).
-		Where("service_mode <> ?", services.POSOrderDraftServiceModeLaundryHold).
+		Where("service_mode IN ?", restaurantOrderDraftServiceModes()).
 		Where("fulfillment_status IN ?", fulfillmentStatuses).
 		Order("COALESCE(sent_to_kitchen_at, updated_at) ASC, id ASC").
 		Find(&drafts).Error; err != nil {

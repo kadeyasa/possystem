@@ -52,9 +52,41 @@ func EnsureInventorySchema(db *gorm.DB) error {
 			`UPDATE tblproducts SET item_type = 'resale_item' WHERE COALESCE(BTRIM(item_type), '') = ''`,
 			`UPDATE tblproducts SET purchase_conversion_qty = 1 WHERE COALESCE(purchase_conversion_qty, 0) <= 0`,
 			`UPDATE tblproducts SET purchase_unit = satuan WHERE COALESCE(BTRIM(purchase_unit), '') = '' AND COALESCE(BTRIM(satuan), '') <> ''`,
+			`UPDATE tblproducts SET code = BTRIM(code) WHERE code <> BTRIM(code)`,
+			`DO $$
+			DECLARE constraint_name text;
+			BEGIN
+				FOR constraint_name IN
+					SELECT conname
+					FROM pg_constraint
+					WHERE conrelid = 'public.tblproducts'::regclass
+						AND contype = 'u'
+						AND pg_get_constraintdef(oid) ILIKE '%(code)%'
+						AND pg_get_constraintdef(oid) NOT ILIKE '%outlet_id%'
+				LOOP
+					EXECUTE format('ALTER TABLE public.tblproducts DROP CONSTRAINT %I', constraint_name);
+				END LOOP;
+			END $$`,
+			`DO $$
+			DECLARE idx record;
+			BEGIN
+				FOR idx IN
+					SELECT indexname
+					FROM pg_indexes
+					WHERE schemaname = 'public'
+						AND tablename = 'tblproducts'
+						AND indexdef ILIKE 'CREATE UNIQUE INDEX%'
+						AND indexdef ILIKE '%(code)%'
+						AND indexdef NOT ILIKE '%outlet_id%'
+				LOOP
+					EXECUTE format('DROP INDEX IF EXISTS public.%I', idx.indexname);
+				END LOOP;
+			END $$`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_tblproducts_outlet_code_active_unique ON tblproducts (outlet_id, code) WHERE deleted_at IS NULL`,
+			`CREATE INDEX IF NOT EXISTS idx_tblproducts_outlet_code_lookup ON tblproducts (outlet_id, code) WHERE deleted_at IS NULL`,
 			`CREATE TABLE IF NOT EXISTS public.tblinventory_ledger (
-				id BIGSERIAL PRIMARY KEY,
-				outlet_id BIGINT NOT NULL,
+					id BIGSERIAL PRIMARY KEY,
+					outlet_id BIGINT NOT NULL,
 				product_id BIGINT NOT NULL,
 				variant_id BIGINT,
 				movement_type VARCHAR(32) NOT NULL,

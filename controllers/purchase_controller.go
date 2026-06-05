@@ -1,8 +1,13 @@
 package controllers
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +29,95 @@ type PurchaseInput struct {
 	Note          string                `json:"note"`
 	Items         []models.PurchaseItem `json:"items"`
 	PaymentMethod string                `json:"payment_method"` // "cash" or "credit"
+}
+
+const maxPurchaseInvoiceUploadSize = 10 << 20
+
+func ExtractPurchaseInvoice(c *gin.Context) {
+	fileHeader, err := c.FormFile("image")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File invoice belum dipilih"})
+		return
+	}
+
+	extension := strings.ToLower(filepath.Ext(fileHeader.Filename))
+	allowedExtensions := map[string]bool{
+		".jpg":  true,
+		".jpeg": true,
+		".png":  true,
+		".webp": true,
+	}
+	if !allowedExtensions[extension] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Format invoice harus JPG, JPEG, PNG, atau WEBP"})
+		return
+	}
+	if fileHeader.Size > maxPurchaseInvoiceUploadSize {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Ukuran invoice terlalu besar. Maksimal 10MB"})
+		return
+	}
+
+	if outletRaw := strings.TrimSpace(c.PostForm("outlet_id")); outletRaw != "" {
+		if _, parseErr := strconv.ParseUint(outletRaw, 10, 64); parseErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "outlet_id tidak valid"})
+			return
+		}
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuka file invoice"})
+		return
+	}
+	defer file.Close()
+
+	buffer := make([]byte, 512)
+	readSize, readErr := file.Read(buffer)
+	if readErr != nil && readErr != io.EOF {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membaca file invoice"})
+		return
+	}
+	contentType := http.DetectContentType(buffer[:readSize])
+	if !strings.HasPrefix(contentType, "image/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File invoice harus berupa gambar"})
+		return
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyiapkan file invoice"})
+		return
+	}
+
+	tempFile, err := os.CreateTemp("", "purchase-invoice-*"+extension)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membuat file sementara untuk invoice"})
+		return
+	}
+	tempPath := tempFile.Name()
+	defer os.Remove(tempPath)
+
+	if _, err := io.Copy(tempFile, file); err != nil {
+		tempFile.Close()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan file invoice sementara"})
+		return
+	}
+	if err := tempFile.Close(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menutup file invoice sementara"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
+	defer cancel()
+
+	extraction, err := services.ExtractPurchaseInvoiceData(ctx, tempPath)
+	if err != nil {
+		utils.Log.Errorf("❌ Failed to extract purchase invoice: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Invoice berhasil dibaca",
+		"data":    extraction,
+	})
 }
 
 func CreatePurchase(c *gin.Context) {

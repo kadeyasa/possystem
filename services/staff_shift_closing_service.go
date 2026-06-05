@@ -22,6 +22,7 @@ func EnsureStaffShiftClosingSchema(db *gorm.DB) error {
 		`ALTER TABLE tblstaff_shift_closings ALTER COLUMN transaction_count SET DEFAULT 0`,
 		`ALTER TABLE tblstaff_shift_closings ALTER COLUMN gross_sales_amount SET DEFAULT 0`,
 		`ALTER TABLE tblstaff_shift_closings ALTER COLUMN discount_amount SET DEFAULT 0`,
+		`ALTER TABLE tblstaff_shift_closings ADD COLUMN IF NOT EXISTS service_amount DOUBLE PRECISION DEFAULT 0`,
 		`ALTER TABLE tblstaff_shift_closings ALTER COLUMN tax_amount SET DEFAULT 0`,
 		`ALTER TABLE tblstaff_shift_closings ALTER COLUMN net_sales_amount SET DEFAULT 0`,
 		`ALTER TABLE tblstaff_shift_closings ALTER COLUMN cash_transaction_count SET DEFAULT 0`,

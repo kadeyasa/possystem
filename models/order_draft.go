@@ -10,6 +10,7 @@ type POSOrderDraft struct {
 	CashierName             string              `gorm:"column:cashier_name" json:"cashier_name"`
 	CustomerName            string              `gorm:"column:customer_name" json:"customer_name"`
 	CustomerPhone           string              `gorm:"column:customer_phone" json:"customer_phone"`
+	CustomerID              *uint               `gorm:"column:customer_id" json:"customer_id"`
 	OrderLabel              string              `gorm:"column:order_label" json:"order_label"`
 	TableLabel              string              `gorm:"column:table_label" json:"table_label"`
 	ServiceMode             string              `gorm:"column:service_mode" json:"service_mode"`
@@ -27,6 +28,8 @@ type POSOrderDraft struct {
 	Subtotal                float64             `gorm:"column:subtotal" json:"subtotal"`
 	DiscountPercent         float64             `gorm:"column:discount_percent" json:"discount_percent"`
 	Discount                float64             `gorm:"column:discount" json:"discount"`
+	ServicePercent          float64             `gorm:"column:service_percent" json:"service_percent"`
+	Service                 float64             `gorm:"column:service" json:"service"`
 	TaxPercent              float64             `gorm:"column:tax_percent" json:"tax_percent"`
 	Tax                     float64             `gorm:"column:tax" json:"tax"`
 	Total                   float64             `gorm:"column:total" json:"total"`
