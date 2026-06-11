@@ -2,6 +2,8 @@ package main
 
 import (
 	"log"
+	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -26,6 +28,9 @@ func main() {
 	utils.Log.Info("📦 Starting app...")
 
 	r := gin.Default()
+	if err := r.SetTrustedProxies(trustedProxies()); err != nil {
+		utils.Log.Fatal("failed to configure trusted proxies: ", err)
+	}
 
 	// Gunakan CORS middleware
 	r.Use(middleware.SetupCors())
@@ -40,4 +45,24 @@ func main() {
 		utils.Log.Fatal("failed to start server: ", err)
 	}
 	log.Println("Server started on port 8081")
+}
+
+func trustedProxies() []string {
+	value := os.Getenv("TRUSTED_PROXIES")
+	if strings.TrimSpace(value) == "" {
+		return []string{"127.0.0.1", "::1"}
+	}
+
+	proxies := strings.Split(value, ",")
+	result := make([]string, 0, len(proxies))
+	for _, proxy := range proxies {
+		proxy = strings.TrimSpace(proxy)
+		if proxy != "" {
+			result = append(result, proxy)
+		}
+	}
+	if len(result) == 0 {
+		return []string{"127.0.0.1", "::1"}
+	}
+	return result
 }
