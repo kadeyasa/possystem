@@ -82,7 +82,11 @@ func SecurityHeaders() gin.HandlerFunc {
 		headers.Set("X-Frame-Options", "DENY")
 		headers.Set("Referrer-Policy", "no-referrer")
 		headers.Set("Cross-Origin-Opener-Policy", "same-origin")
-		headers.Set("Cross-Origin-Resource-Policy", "same-origin")
+		if strings.HasPrefix(c.Request.URL.Path, "/datauploads/") {
+			headers.Set("Cross-Origin-Resource-Policy", "cross-origin")
+		} else {
+			headers.Set("Cross-Origin-Resource-Policy", "same-origin")
+		}
 		headers.Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
 		headers.Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' https: http: ws: wss:")
 		c.Next()
