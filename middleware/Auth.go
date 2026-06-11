@@ -6,12 +6,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/kadeyasa/possystem/utils"
 )
-
-var jwtSecret = []byte("abcd123456yukdkidkdk") // JWT_KEY
 
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		jwtSecret, secretErr := utils.JWTSecret()
+		if secretErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "JWT secret is not configured"})
+			c.Abort()
+			return
+		}
+
 		// Ambil Authorization header
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {

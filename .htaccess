@@ -1,0 +1,10 @@
+Options -Indexes
+
+<FilesMatch "(^\.|\.env$|\.log$|\.sql$|\.zip$|\.tar$|\.tar\.gz$|\.tgz$|\.sha256$|^possystem($|-linux-)|^go\.(mod|sum)$)">
+    Require all denied
+</FilesMatch>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule (^|/)(\.git|build|release|ops|scripts|controllers|database|middleware|models|routes|services|utils)(/|$) - [F,L]
+</IfModule>

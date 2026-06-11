@@ -1,9 +1,7 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -27,14 +25,13 @@ func main() {
 	utils.InitLogger()
 	utils.Log.Info("📦 Starting app...")
 
-	fmt.Println("DB_HOST:", os.Getenv("DB_HOST"))
-	fmt.Println("DB_USER:", os.Getenv("DB_USER"))
-	fmt.Println("DB_NAME:", os.Getenv("DB_NAME"))
-
 	r := gin.Default()
 
 	// Gunakan CORS middleware
 	r.Use(middleware.SetupCors())
+	r.Use(middleware.SecurityHeaders())
+	r.Use(middleware.SanitizeJSONRequests())
+	r.Use(middleware.SanitizeJSONResponses())
 
 	routes.SetupRoutes(r)
 
