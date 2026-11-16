@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # Test-only secret; production secrets never live in the repository.
+      JWT_KEY: ci-test-key-0000000000000000000000000000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+      - name: Build linux binary
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o possystem-linux-amd64 .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: possystem-linux-amd64-${{ github.sha }}
+          path: possystem-linux-amd64
+          retention-days: 30

@@ -15,3 +15,9 @@ tmp_audit_backups/
 
 # Go test and coverage
 coverage.out
+
+# Build and release artifacts (publish via CI artifacts, not git)
+possystem
+possystem-linux-*
+release/
+*.zip

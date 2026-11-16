@@ -29,14 +29,10 @@ func AuthMiddleware() gin.HandlerFunc {
 		// Ambil token string
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-		// Parse token
+		// Parse token: HS256 only, expiry required.
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			// pastikan algoritma HS256
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, jwt.ErrSignatureInvalid
-			}
 			return jwtSecret, nil
-		})
+		}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired())
 
 		if err != nil || !token.Valid {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
@@ -44,8 +40,17 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok || !isAcceptedPOSTokenType(claims) {
+			// Member, PT and untyped legacy tokens share the signing key with
+			// the gym API but must never act as cashier/staff on the POS.
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
+
 		// Ambil claims
-		if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		{
 			actorType := ""
 			if rawActorType, ok := claims["actor_type"].(string); ok && strings.TrimSpace(rawActorType) != "" {
 				actorType = strings.TrimSpace(rawActorType)
@@ -61,15 +66,10 @@ func AuthMiddleware() gin.HandlerFunc {
 			if userID, ok := claims["userid"].(float64); ok && userID > 0 {
 				c.Set("user_id", int64(userID))
 			}
-			if memberID, ok := claims["member_id"].(string); ok && strings.TrimSpace(memberID) != "" {
-				c.Set("user_id", strings.TrimSpace(memberID))
-				if actorType == "" {
-					actorType = "karyawan"
-					c.Set("actor_type", actorType)
+			if karyawanID, ok := claims["karyawan_id"].(float64); ok && karyawanID > 0 {
+				if _, exists := c.Get("user_id"); !exists {
+					c.Set("user_id", int64(karyawanID))
 				}
-			}
-			if memberID, ok := claims["member_id"].(float64); ok && memberID > 0 {
-				c.Set("user_id", int64(memberID))
 				if actorType == "" {
 					actorType = "karyawan"
 					c.Set("actor_type", actorType)
@@ -109,4 +109,17 @@ func AuthMiddleware() gin.HandlerFunc {
 		// lanjut ke handler berikutnya
 		c.Next()
 	}
+}
+
+// Token types issued by the gym API (apifitness) that may use the POS:
+// "staff" (admin/outlet/karyawan back-office login) and "karyawan_app"
+// (cashier login). Member ("member"), PT ("pt") and untyped tokens are refused.
+var acceptedPOSTokenTypes = map[string]bool{
+	"staff":        true,
+	"karyawan_app": true,
+}
+
+func isAcceptedPOSTokenType(claims jwt.MapClaims) bool {
+	typ, _ := claims["typ"].(string)
+	return acceptedPOSTokenTypes[strings.TrimSpace(typ)]
 }
